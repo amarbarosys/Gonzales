@@ -7,6 +7,7 @@ Sampler "sobol" "integer pixelsamples" [ 8 ] # gonsolo 512
 #PixelFilter "box" "float xradius" [ 10 ] "float yradius" [ 10 ]
 #PixelFilter "gaussian" "float xradius" [ 1.5 ] "float yradius" [ 1.5 ]
 #PixelFilter "box" "float xradius" [ 0.5 ] "float yradius" [ 0.5 ]
+# Deliberately wide (edges about 6 px soft at 512 px); pbrt's default gaussian (radius 1.5, sigma 0.5) is among the commented lines above.
 PixelFilter "gaussian" "float xradius" [ 5 ] "float yradius" [ 5 ] "float sigma" [2.5]
 
 Accelerator "bvh"
