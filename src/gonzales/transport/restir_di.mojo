@@ -18,7 +18,7 @@
 
 from std.math import sqrt
 from gonzales.core.geometry import RGB, dot, INV_PI, Vec3f
-from gonzales.core.reservoir import ReservoirState, reservoir_state_init
+from gonzales.core.reservoir import ReservoirState, reservoir_state_init, ReservoirBuffers, reservoir_buffers_null
 
 @fieldwise_init
 struct DIReservoir(TrivialRegisterPassable):
@@ -82,48 +82,9 @@ def di_target_pdf(
     var contrib = alb * le * (INV_PI * g)
     return contrib.r * Float32(0.2126) + contrib.g * Float32(0.7152) + contrib.b * Float32(0.0722)
 
-@fieldwise_init
-struct ReservoirIO(TrivialRegisterPassable):
-    """Bundles everything di_temporal_step needs beyond the current pixel's
-    own hit data, so Phase 2.3/2.5's plumbing through the
-    shade_core_cpu_nee -> ... -> di_temporal_step call chain (rendering.mojo,
-    shading.mojo) is ONE trailing defaulted parameter instead of five. `read`
-    is the previous frame's fully-resolved reservoirs (safe to read from any
-    thread -- render_all_tiles parallelizes per-tile, so this must never be
-    written to during the frame that reads it); `write` is this frame's
-    target (each pixel written by exactly one thread, at interactive mode's
-    1 spp/frame, so no two threads ever touch the same slot). pipeline.mojo's
-    render_interactive swaps which physical buffer is `read` vs `write` each
-    frame rather than copying. gbuf_* are Phase 0.3's world-pos/material-ID
-    G-buffer extension (gbuf_normal/gbuf_depth already existed for the
-    denoiser; gbuf_material_id is new, wired only when use_restir) -- used
-    for 2.5's neighbor rejection (normal dot / depth delta / material match).
-    All pointers default to `.unsafe_dangling()` and frame_w/frame_h to 0;
-    di_temporal_step checks `_is_real_ptr`/`> 0` before ever touching them,
-    so callers that don't pass a real ReservoirIO (the batch --restir path)
-    get exactly the old "no temporal, no spatial reuse" behavior for free."""
-    var read:  Pointer[DIReservoir, MutUntrackedOrigin]
-    var write: Pointer[DIReservoir, MutUntrackedOrigin]
-    var gbuf_normal:      Pointer[Float32, MutUntrackedOrigin]
-    var gbuf_depth:       Pointer[Float32, MutUntrackedOrigin]
-    var gbuf_material_id: Pointer[Int32, MutUntrackedOrigin]
-    # World position per pixel (Phase 0.3's other G-buffer output). Needed
-    # for spatial reuse's Z normalization: deciding whether a NEIGHBOUR's
-    # integration domain could have produced the chosen sample means
-    # re-evaluating the target function at THAT neighbour's shading point,
-    # which needs its position, not just its normal.
-    var gbuf_world_pos:   Pointer[Float32, MutUntrackedOrigin]
-    var frame_w: Int32
-    var frame_h: Int32
+# What di_temporal_step needs beyond the pixel's own hit data: see ReservoirBuffers (core/reservoir.mojo).
+comptime ReservoirIO = ReservoirBuffers[DIReservoir]
 
 @always_inline
 def reservoir_io_null() -> ReservoirIO:
-    return ReservoirIO(
-        read=Pointer[DIReservoir, MutUntrackedOrigin].unsafe_dangling(),
-        write=Pointer[DIReservoir, MutUntrackedOrigin].unsafe_dangling(),
-        gbuf_normal=Pointer[Float32, MutUntrackedOrigin].unsafe_dangling(),
-        gbuf_depth=Pointer[Float32, MutUntrackedOrigin].unsafe_dangling(),
-        gbuf_material_id=Pointer[Int32, MutUntrackedOrigin].unsafe_dangling(),
-        gbuf_world_pos=Pointer[Float32, MutUntrackedOrigin].unsafe_dangling(),
-        frame_w=Int32(0), frame_h=Int32(0),
-    )
+    return reservoir_buffers_null[DIReservoir]()

@@ -32,7 +32,7 @@
 from std.collections import Array
 from std.math import sqrt, abs
 from gonzales.core.geometry import RGB, dot, INV_PI, _is_real_ptr, Vec3f, Point2i, restir_jitter_pixel
-from gonzales.core.reservoir import ReservoirState, reservoir_state_init, reservoir_combine, reservoir_finalize, reservoir_cap_confidence
+from gonzales.core.reservoir import ReservoirState, reservoir_state_init, reservoir_combine, reservoir_finalize, reservoir_cap_confidence, ReservoirBuffers, reservoir_buffers_null
 from gonzales.core.rng import PCG32
 
 @fieldwise_init
@@ -124,37 +124,12 @@ def gi_target_pdf(
 
 # ── ReSTIR GI reuse (Phase 4.2, partial: combine only) ──────────────────────
 
-@fieldwise_init
-struct GIReservoirIO(TrivialRegisterPassable):
-    """GI's counterpart to restir_di.mojo's ReservoirIO -- read/write
-    persistent reservoir buffers plus the shared Phase 0.3 G-buffer pointers
-    for spatial-neighbor rejection. Duplicated rather than shared with
-    ReservoirIO (which is typed for DIReservoir specifically) -- this
-    codebase avoids generics throughout (see reservoir.mojo's own docstring)
-    in favor of small, independently-readable duplicated structs. All
-    pointers default to `.unsafe_dangling()` and frame_w/frame_h to 0;
-    gi_temporal_spatial_combine checks `_is_real_ptr`/`> 0` before ever
-    touching them, matching ReservoirIO's own null-safety contract."""
-    var read:  Pointer[GIReservoir, MutUntrackedOrigin]
-    var write: Pointer[GIReservoir, MutUntrackedOrigin]
-    var gbuf_normal:      Pointer[Float32, MutUntrackedOrigin]
-    var gbuf_depth:       Pointer[Float32, MutUntrackedOrigin]
-    var gbuf_material_id: Pointer[Int32, MutUntrackedOrigin]
-    var gbuf_world_pos:   Pointer[Float32, MutUntrackedOrigin]
-    var frame_w: Int32
-    var frame_h: Int32
+# GI's counterpart to restir_di.mojo's ReservoirIO, read by gi_temporal_spatial_combine: see ReservoirBuffers (core/reservoir.mojo).
+comptime GIReservoirIO = ReservoirBuffers[GIReservoir]
 
 @always_inline
 def gi_reservoir_io_null() -> GIReservoirIO:
-    return GIReservoirIO(
-        read=Pointer[GIReservoir, MutUntrackedOrigin].unsafe_dangling(),
-        write=Pointer[GIReservoir, MutUntrackedOrigin].unsafe_dangling(),
-        gbuf_normal=Pointer[Float32, MutUntrackedOrigin].unsafe_dangling(),
-        gbuf_depth=Pointer[Float32, MutUntrackedOrigin].unsafe_dangling(),
-        gbuf_material_id=Pointer[Int32, MutUntrackedOrigin].unsafe_dangling(),
-        gbuf_world_pos=Pointer[Float32, MutUntrackedOrigin].unsafe_dangling(),
-        frame_w=Int32(0), frame_h=Int32(0),
-    )
+    return reservoir_buffers_null[GIReservoir]()
 
 # Placeholder tuning constants, copied from DI's MEASURED values
 # (shading.mojo's DI_TEMPORAL_M_CAP/DI_SPATIAL_* -- see the tuning notes

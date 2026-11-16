@@ -5,9 +5,9 @@
 # the bookkeeping triple (w_sum, m, w); the actual candidate (a light
 # sample, a path suffix, a specular chain, ...) lives in the caller's own
 # struct alongside a `ReservoirState` field, swapped in manually when
-# `reservoir_update`/`reservoir_combine` return True. This sidesteps
-# generics entirely (no parametric struct exists anywhere else in this
-# codebase) and matches how real ReSTIR shader implementations (HLSL/Slang)
+# `reservoir_update`/`reservoir_combine` return True. The payload is never
+# generic (the one parametric struct here, ReservoirBuffers, only bundles the
+# per-frame buffer pointers every payload shares) and matches how real ReSTIR shader implementations (HLSL/Slang)
 # do it: `if (Update(...)) { self.payloadField = candidate.field; ... }`.
 # Payload-specific reservoirs (e.g. a future DIReservoir for Phase 2) should
 # be thin wrappers composing a `ReservoirState`, not reimplementations of
@@ -23,6 +23,53 @@ struct ReservoirState(TrivialRegisterPassable):
 @always_inline
 def reservoir_state_init() -> ReservoirState:
     return ReservoirState(Float32(0.0), Float32(0.0), Float32(0.0))
+
+@fieldwise_init
+struct ReservoirBuffers[R: AnyType](TrivialRegisterPassable):
+    """Everything a ReSTIR temporal/spatial step needs beyond the current
+    pixel's own hit data, as ONE trailing defaulted parameter instead of five.
+    One struct for every payload R: DIReservoir (restir_di.mojo's
+    ReservoirIO), GIReservoir (GIReservoirIO) and SMSReservoir
+    (SMSReservoirIO). `read` is the previous frame's fully-resolved reservoirs
+    (safe to read from any thread -- render_all_tiles parallelizes per-tile, so
+    this must never be written to during the frame that reads it); `write` is
+    this frame's target (each pixel written by exactly one thread, at
+    interactive mode's 1 spp/frame, so no two threads ever touch the same
+    slot). pipeline.mojo's render_interactive swaps which physical buffer is
+    `read` vs `write` each frame rather than copying. gbuf_* are Phase 0.3's
+    world-pos/material-ID G-buffer extension (gbuf_normal/gbuf_depth already
+    existed for the denoiser; gbuf_material_id is new, wired only when
+    use_restir) -- used for neighbor rejection (normal dot / depth delta /
+    material match). All pointers default to `.unsafe_dangling()` and
+    frame_w/frame_h to 0 (reservoir_buffers_null); the temporal/spatial steps
+    check `_is_real_ptr`/`> 0` before ever touching them, so callers that don't
+    pass real buffers (the batch --restir path) get exactly the old "no
+    temporal, no spatial reuse" behavior for free."""
+    var read:  Pointer[Self.R, MutUntrackedOrigin]
+    var write: Pointer[Self.R, MutUntrackedOrigin]
+    var gbuf_normal:      Pointer[Float32, MutUntrackedOrigin]
+    var gbuf_depth:       Pointer[Float32, MutUntrackedOrigin]
+    var gbuf_material_id: Pointer[Int32, MutUntrackedOrigin]
+    # World position per pixel (Phase 0.3's other G-buffer output). Needed
+    # for spatial reuse's Z normalization: deciding whether a NEIGHBOUR's
+    # integration domain could have produced the chosen sample means
+    # re-evaluating the target function at THAT neighbour's shading point,
+    # which needs its position, not just its normal.
+    var gbuf_world_pos:   Pointer[Float32, MutUntrackedOrigin]
+    var frame_w: Int32
+    var frame_h: Int32
+
+@always_inline
+def reservoir_buffers_null[R: AnyType]() -> ReservoirBuffers[R]:
+    return ReservoirBuffers[R](
+        read=Pointer[R, MutUntrackedOrigin].unsafe_dangling(),
+        write=Pointer[R, MutUntrackedOrigin].unsafe_dangling(),
+        gbuf_normal=Pointer[Float32, MutUntrackedOrigin].unsafe_dangling(),
+        gbuf_depth=Pointer[Float32, MutUntrackedOrigin].unsafe_dangling(),
+        gbuf_material_id=Pointer[Int32, MutUntrackedOrigin].unsafe_dangling(),
+        gbuf_world_pos=Pointer[Float32, MutUntrackedOrigin].unsafe_dangling(),
+        frame_w=Int32(0), frame_h=Int32(0),
+    )
 
 @always_inline
 def _reservoir_stream(mut state: ReservoirState, weight: Float32, u: Float32) -> Bool:

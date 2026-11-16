@@ -38,7 +38,7 @@
 from std.collections import Array
 from std.math import sqrt, abs, min
 from gonzales.core.geometry import RGB, dot, INV_PI, Vec3f, _is_real_ptr, Point2i, restir_jitter_pixel
-from gonzales.core.reservoir import ReservoirState, reservoir_state_init
+from gonzales.core.reservoir import ReservoirState, reservoir_state_init, ReservoirBuffers, reservoir_buffers_null
 from gonzales.transport.sms import SMSVertex, MAX_SMS_VERTICES, sms_vertex_init, sms_walk, sms_refresh_solved_frames
 from gonzales.core.rng import PCG32
 from gonzales.core.reservoir import reservoir_combine, reservoir_finalize
@@ -210,41 +210,14 @@ def sms_shift(
 
     return (True, fwd_pos^, fwd_bsdf, fwd_jac)
 
-@fieldwise_init
-struct SMSReservoirIO(TrivialRegisterPassable):
-    """Per-pixel persistent reservoir buffers for temporal-only reuse
-    (Phase 6's first driver -- no spatial reuse yet, so unlike
-    restir_di.mojo's ReservoirIO/restir_gi.mojo's GIReservoirIO this
-    carries no G-buffer pointers; add them alongside spatial reuse when
-    that lands, not before). `read` is the previous frame's fully-
-    resolved reservoirs; `write` is this frame's target -- pipeline.mojo's
-    render_interactive swaps which physical buffer is which each frame
-    rather than copying, same convention as the DI/GI buffers."""
-    var read:  Pointer[SMSReservoir, MutUntrackedOrigin]
-    var write: Pointer[SMSReservoir, MutUntrackedOrigin]
-    # Phase 0.3's shared G-buffer, added with spatial reuse exactly as this
-    # struct's docstring said it would be. `gbuf_world_pos` is not just for
-    # rejection here the way it is for DI/GI: the manifold shift needs the
-    # NEIGHBOUR'S OWN shading point as `src_x0`, because a specular chain is
-    # only admissible relative to the point it was solved for.
-    var gbuf_normal:      Pointer[Float32, MutUntrackedOrigin]
-    var gbuf_depth:       Pointer[Float32, MutUntrackedOrigin]
-    var gbuf_material_id: Pointer[Int32, MutUntrackedOrigin]
-    var gbuf_world_pos:   Pointer[Float32, MutUntrackedOrigin]
-    var frame_w: Int32
-    var frame_h: Int32
+# SMS reuse buffers (see ReservoirBuffers, core/reservoir.mojo). Here `gbuf_world_pos` is not only for rejection as in DI/GI:
+# the manifold shift needs the NEIGHBOUR'S OWN shading point as `src_x0`, because a specular chain is
+# only admissible relative to the point it was solved for.
+comptime SMSReservoirIO = ReservoirBuffers[SMSReservoir]
 
 @always_inline
 def sms_reservoir_io_null() -> SMSReservoirIO:
-    return SMSReservoirIO(
-        read=Pointer[SMSReservoir, MutUntrackedOrigin].unsafe_dangling(),
-        write=Pointer[SMSReservoir, MutUntrackedOrigin].unsafe_dangling(),
-        gbuf_normal=Pointer[Float32, MutUntrackedOrigin].unsafe_dangling(),
-        gbuf_depth=Pointer[Float32, MutUntrackedOrigin].unsafe_dangling(),
-        gbuf_material_id=Pointer[Int32, MutUntrackedOrigin].unsafe_dangling(),
-        gbuf_world_pos=Pointer[Float32, MutUntrackedOrigin].unsafe_dangling(),
-        frame_w=Int32(0), frame_h=Int32(0),
-    )
+    return reservoir_buffers_null[SMSReservoir]()
 
 @always_inline
 def sms_spatial_combine(
