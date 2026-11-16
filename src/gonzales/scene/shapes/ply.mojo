@@ -1,4 +1,5 @@
-from std.memory import unsafe_memcpy
+from std.bit import byte_swap
+from std.memory import bitcast, unsafe_memcpy
 from std.memory.alloc import unsafe_alloc
 
 comptime PLY_X    = 0
@@ -138,42 +139,24 @@ def _ply_f32_le(buf: Pointer[UInt8, MutUntrackedOrigin], pos: Int) -> Float32:
 def _ply_i32_le(buf: Pointer[UInt8, MutUntrackedOrigin], pos: Int) -> Int32:
     return (buf.unsafe_offset(pos)).unsafe_bitcast[Int32]()[unsafe_offset=0]
 
+# Big-endian and double reads: one unaligned load (as the little-endian readers above) plus a byte swap,
+# no scratch buffer per value.
 @always_inline
-def _ply_u8_at(buf: Pointer[UInt8, MutUntrackedOrigin], pos: Int) -> Int:
-    return Int(buf[unsafe_offset=pos])
-
 def _ply_f32_be(buf: Pointer[UInt8, MutUntrackedOrigin], pos: Int) -> Float32:
-    var tmp = unsafe_alloc[UInt8](4)
-    tmp[unsafe_offset=0] = buf[unsafe_offset=pos + 3]; tmp[unsafe_offset=1] = buf[unsafe_offset=pos + 2]
-    tmp[unsafe_offset=2] = buf[unsafe_offset=pos + 1]; tmp[unsafe_offset=3] = buf[unsafe_offset=pos + 0]
-    var v = tmp.unsafe_bitcast[Float32]()[unsafe_offset=0]
-    tmp.unsafe_free()
-    return v
+    return bitcast[DType.float32](byte_swap((buf.unsafe_offset(pos)).unsafe_bitcast[UInt32]()[unsafe_offset=0]))
 
+@always_inline
 def _ply_i32_be(buf: Pointer[UInt8, MutUntrackedOrigin], pos: Int) -> Int32:
-    var tmp = unsafe_alloc[UInt8](4)
-    tmp[unsafe_offset=0] = buf[unsafe_offset=pos + 3]; tmp[unsafe_offset=1] = buf[unsafe_offset=pos + 2]
-    tmp[unsafe_offset=2] = buf[unsafe_offset=pos + 1]; tmp[unsafe_offset=3] = buf[unsafe_offset=pos + 0]
-    var v = tmp.unsafe_bitcast[Int32]()[unsafe_offset=0]
-    tmp.unsafe_free()
-    return v
+    return byte_swap((buf.unsafe_offset(pos)).unsafe_bitcast[Int32]()[unsafe_offset=0])
 
 # Read a 64-bit double and return as Float32 (for double-precision PLY positions).
+@always_inline
 def _ply_f64_le(buf: Pointer[UInt8, MutUntrackedOrigin], pos: Int) -> Float32:
-    var tmp = unsafe_alloc[UInt8](8)
-    for k in range(8):
-        tmp[unsafe_offset=k] = buf[unsafe_offset=pos + k]
-    var d = tmp.unsafe_bitcast[Float64]()[unsafe_offset=0]
-    tmp.unsafe_free()
-    return Float32(d)
+    return Float32((buf.unsafe_offset(pos)).unsafe_bitcast[Float64]()[unsafe_offset=0])
 
+@always_inline
 def _ply_f64_be(buf: Pointer[UInt8, MutUntrackedOrigin], pos: Int) -> Float32:
-    var tmp = unsafe_alloc[UInt8](8)
-    for k in range(8):
-        tmp[unsafe_offset=k] = buf[unsafe_offset=pos + 7 - k]
-    var d = tmp.unsafe_bitcast[Float64]()[unsafe_offset=0]
-    tmp.unsafe_free()
-    return Float32(d)
+    return Float32(bitcast[DType.float64](byte_swap((buf.unsafe_offset(pos)).unsafe_bitcast[UInt64]()[unsafe_offset=0])))
 
 # Read a count from a face list field. type_size is 1, 2, or 4.
 def _ply_read_count(buf: Pointer[UInt8, MutUntrackedOrigin], pos: Int, type_size: Int, le: Bool) -> Int:
