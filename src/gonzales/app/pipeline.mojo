@@ -2592,7 +2592,7 @@ def parse_and_render(
             return Int32(-1)
         var spp = Int(psc[unsafe_offset=0].samples_per_pixel)
         var ret = Int32(0)
-        var handle = gpu_upload_scene(psc, sobol_matrices, n_pixels, spectral.coeffs, spectral.res, spectral.cie_x, spectral.cie_y, spectral.cie_z, spectral.d65, gpu_ctx, restir_di=use_restir, restir_vol=use_vol_restir_reuse, instances_external=_instances_in_tlas(psc))
+        var handle = gpu_upload_scene(psc, sobol_matrices, n_pixels, spectral.coeffs, spectral.res, spectral.cie_x, spectral.cie_y, spectral.cie_z, spectral.d65, gpu_ctx, restir_di=use_restir, restir_vol=use_vol_restir_reuse, instances_external=_instances_in_tlas(psc), batch=_file_batch())
         if not _is_real_ptr(handle):
             mojo_parsed_free(psc)
             return Int32(-1)
@@ -3781,6 +3781,14 @@ comptime SessionPtr = Pointer[RenderSession, MutUntrackedOrigin]
 # About a million paths keep the GPU busy; more only cost memory (some 350 bytes a path).
 def _session_batch(n_pixels: Int) -> Int:
     return max(1, min(WAVEFRONT_BATCH, (1 << 20) // max(n_pixels, 1)))
+
+# Samples a pixel in flight for a file render: WAVEFRONT_BATCH unless GONZALES_BATCH lowers it. Each step down frees 0.6 GB
+# a megapixel and costs wall: bathroom 1024 px, 64 spp: batch 8 7.9 s / 8.8 GB, 4 9.2 s / 6.6 GB, 2 11.4 s / 5.5 GB, 1 16.1 s / 5.0 GB.
+def _file_batch() -> Int:
+    try:
+        return min(WAVEFRONT_BATCH, max(1, env_int["GONZALES_BATCH"](WAVEFRONT_BATCH)))
+    except:
+        return WAVEFRONT_BATCH
 
 def session_new(psc: Pointer[ParsedScene_Mojo, MutUntrackedOrigin], sobol: Pointer[UInt32, MutUntrackedOrigin],
                 spectral: SpectralHandle, gpu_ctx: Optional[DeviceContext]) -> SessionPtr:
