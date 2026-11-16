@@ -15,15 +15,13 @@
 > |---|---|
 > | Removed `_to_spec_weight`, `Scene.with_camera_footprint`, `scene_parse_state_new` | Unused: every name in `src/` was counted over all tracked code, and these three had no use beyond their definition (the first lost its last callers in `cd6fdf82` and `339cd80a`). |
 > | PLY big-endian and double readers: one load plus `byte_swap` instead of a heap allocation per value; removed the unused `_ply_u8_at` | About 19x faster on 64 MB of random bytes (354-400 ms to 19-20 ms) and bit-exact on all 67M offsets. Little-endian float PLY, the common case, was already a direct load. |
+> | `.python-version` = 3.14 | `requires-python >=3.14` let `uv` pick 3.15, where `uv sync` fails: `max` 26.7 ships cp314 wheels only. A fresh venv now gets 3.14.10 (3.15.2 without the file). |
+> | `make release-amd AMD_TARGET=gfx1100` (default stays gfx1030) | The target was hard-coded to the RX 6800. On the RX 7900 XTX it builds (282 s) and renders: Cornell box 512 px, 64 spp, GPU 0.75 s vs CPU 6.6 s. |
+> | Runs from any directory: absolute rpath; data dir falls back to the binary's checkout (`GONZALES_DATA_DIR` still overrides) | It had to start from the repo root (`liboiiobridge.so` not found, `cannot open Sobol data file`). A GPU render from a directory outside the repo, without `LD_LIBRARY_PATH`, now works. |
+> | Comment on `Scenes/cornell-box.pbrt`'s `PixelFilter` | Its gaussian (radius 5, sigma 2.5) makes edges about 6 px soft by design; the render is unchanged. |
 >
 > Our own additions live apart in [`contrib/amarbaro/`](contrib/amarbaro/): a best-settings render script and an
 > agent skill, MIT for that folder only, containing no Gonzales code.
->
-> Found while doing it, not yet changed: `uv` picks Python 3.15 but `max` 26.7 ships 3.14 wheels only (use
-> `uv venv --python 3.14`); `release-amd` hard-codes gfx1030, while `make release MOJO_BUILD_FLAGS="--target-accelerator gfx1100" CUDA_HOME=/nonexistent BUILD_DIR=build-amd`
-> builds and renders on gfx1100 (Cornell box 512 px, 64 spp: GPU 0.75 s, CPU 6.6 s); the binary must run from the
-> repo root (relative rpath and data paths); `Scenes/cornell-box.pbrt` sets a wide `PixelFilter` (gaussian, radius
-> 5, sigma 2.5), so its edges are 6 px soft by design.
 
 # Gonzales — Physically Based Renderer
 
