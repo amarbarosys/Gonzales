@@ -149,13 +149,6 @@ struct SceneView(TrivialRegisterPassable, DevicePassable):
         s.vcmBucketCap = cap
         return s
 
-    def with_camera_footprint(self, cam: CameraFootprint) -> Self:
-        """This scene with the camera data every integrator's texture/bump
-        footprint needs (footprint.mojo), for one render's spp."""
-        var s = self
-        s.camFp = cam
-        return s
-
     def with_vcm(
         self,
         keep_counts: Pointer[Int32, MutUntrackedOrigin],

@@ -19,7 +19,7 @@ from gonzales.scene.accel.bvh import any_hit_dispatch, curve_offset_eps
 from gonzales.core.sampling import sobol_sample_n, sobol_dim_seed
 from gonzales.core.transform import transform_normal, Mat4
 from gonzales.transport.guide import GuideGrid, guide_pos_to_cell, guide_record, null_guide, guide_is_active
-from gonzales.core.spectrum import spec_refl_unbounded, SpectralSample, SampledWavelengths, rgb_to_spectral_sample, rgb_illuminant_to_spectral_sample
+from gonzales.core.spectrum import SpectralSample, SampledWavelengths, rgb_to_spectral_sample, rgb_illuminant_to_spectral_sample
 from gonzales.transport.texturing import _apply_surface_maps, _decode_tangent_normal, _get_tri_verts, _ptex_ask, _ptex_need, _ptex_tri, _tex_lookup, sample_texture
 from gonzales.transport.shade_context import GIPendingX1, ShadeContext
 from gonzales.transport.glossy_sms import GSMS_DEBUG
@@ -325,27 +325,6 @@ def _to_spec_refl(ctx: ShadeContext, c: RGB, wl: SampledWavelengths) -> Spectral
     the conversion belongs -- once, on the way in, rather than converting a
     finished RGB answer back and forth per evaluation."""
     return rgb_to_spectral_sample(ctx.spectral.coeffs, ctx.spectral.res,
-        ctx.spectral.cie_x, ctx.spectral.cie_y, ctx.spectral.cie_z,
-        ctx.spectral.d65, c.r, c.g, c.b, wl)
-
-
-@always_inline
-def _to_spec_weight(ctx: ShadeContext, c: RGB, wl: SampledWavelengths) -> SpectralSample:
-    """A BxDF SAMPLING WEIGHT (f*cos/pdf) -> spectral -- the THIRD converter
-    at this boundary, and the one the conductor was missing.
-
-    A weight is not a reflectance even though both arrive as an RGB triple
-    off a material: a reflectance is bounded by 1 and _to_spec_refl CLAMPS
-    to that, because the sigmoid table's domain is a bounded reflectance. A
-    weight is a throughput multiplier and is routinely larger -- Kulla-Conty's
-    compensation lobe reaches ~1.7 wherever its cosine branch is sampled
-    toward grazing, and all of that excess was being deleted on the way into
-    the spectral path. The conductor furnace read 0.81 instead of 1.0 from
-    this clamp alone, with the compensation itself already correct.
-
-    spec_refl_unbounded is that converter and it already existed; the bug was
-    never a missing capability, only the wrong one of three being called."""
-    return spec_refl_unbounded(ctx.spectral.coeffs, ctx.spectral.res,
         ctx.spectral.cie_x, ctx.spectral.cie_y, ctx.spectral.cie_z,
         ctx.spectral.d65, c.r, c.g, c.b, wl)
 

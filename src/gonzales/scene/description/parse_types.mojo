@@ -624,6 +624,3 @@ def ctm_push(mut s: SceneParseState):
 def ctm_pop(mut s: SceneParseState):
     if len(s.ctm_stack) > 0:
         s.ctm = s.ctm_stack.pop()
-
-def scene_parse_state_new() -> SceneParseState:
-    return SceneParseState()
