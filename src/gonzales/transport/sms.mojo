@@ -33,6 +33,7 @@
 # against _mnee_walk/_mnee_walk2 output).
 
 from std.collections import Array
+from std.sys import get_defined_int
 from std.math import sqrt, abs, max, min, cos, sin, acos
 from gonzales.core.geometry import dot, cross, Frame, Vec3f, Point3f, _atan2f, PI, TWO_PI, _is_real_ptr
 from gonzales.scene.appearance.materials import fr_dielectric
@@ -44,7 +45,10 @@ from gonzales.core.rng import PCG32
 from gonzales.scene.accel.bvh import ray_sphere_hit, traverse_bvh2_core, BVH2Node
 from gonzales.scene.shapes.primitives import PrimKind
 
-comptime MAX_SMS_VERTICES: Int = 6
+# Specular vertices a manifold chain may have. Each is about 1 KB of every MNEE kernel's private memory (the queue resolver, resolve_suppress,
+# the diffuse and coated kernels): 6 -> 4 took them from 22.8/19.6/19.4/15.7 KB to 20.6/17.7/17.5/13.7 KB and left the bathroom and two glass
+# scenes bit-identical. Build with -D MAX_SMS_VERTICES=6 for a scene that needs longer chains (three glass objects in a row).
+comptime MAX_SMS_VERTICES: Int = get_defined_int["MAX_SMS_VERTICES", 4]()
 # Cap on the Bernoulli estimator's trial count. For a chain whose manifold
 # solution is essentially unique the very first trial matches and this is
 # never approached. It has to be generous for a NORMAL-MAPPED caster, where
