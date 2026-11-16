@@ -7,12 +7,15 @@ from gonzales.core.geometry import _is_real_ptr, Vec3f, dot
 from gonzales.scene.appearance.materials import MatKind, resolve_mix
 from gonzales.transport.texturing import mix_amount_at
 from gonzales.scene.shapes.primitives import Intersection
+from std.math import sqrt
 from gonzales.transport.render_state import PathState, ShadowTask, SuppressTask
+from gonzales.transport.mnee_queue import mnee_q_count, mnee_q_head, mnee_q_entry, mnee_q_header
+from gonzales.core.spectrum import SpectralSample
 from gonzales.transport.restir_di import DIReservoir, ReservoirIO, reservoir_io_null
 from gonzales.core.rng import PCG32
 from gonzales.integrators.pt.materials import _shade_sss_exit, shade_coated_diffuse, shade_conductor, shade_dielectric, shade_diffuse, shade_diffuse_transmission, shade_hair, shade_interface, shade_measured, shade_thin_dielectric
 from gonzales.integrators.pt.shading import shade_nee_core
-from gonzales.integrators.pt.nee import _mnee_bsdf_weight, _glossy_sms_bsdf_weight
+from gonzales.integrators.pt.nee import _mnee_bsdf_weight, _glossy_sms_bsdf_weight, _mnee_probe
 from gonzales.transport.glossy_sms import (GSMS_DEBUG, GLOSSY_SMS_MAX_TRIALS, SMSRoot, gsms_queue_count, gsms_queue_task, gsms_queue_long,
     gsms_queue_root, gsms_trial_rng, glossy_sms_refinds)
 from gonzales.transport.bxdf import LobeTables
@@ -31,9 +34,10 @@ def shared_shade_context(
     paths_base: Pointer[PathState, MutUntrackedOrigin],
     use_restir: Bool,
     shadow_tasks: Pointer[ShadowTask, MutUntrackedOrigin],
+    mnee_q: Pointer[UInt8, MutUntrackedOrigin] = Pointer[UInt8, MutUntrackedOrigin].unsafe_dangling(),
 ) -> ShadeContext:
     """The context of _shade_context with the per-thread path index replaced by the base of the path array."""
-    var ctx = _shade_context(sd, sobol_matrices, use_restir=use_restir, shadow_tasks=shadow_tasks)
+    var ctx = _shade_context(sd, sobol_matrices, use_restir=use_restir, shadow_tasks=shadow_tasks, mnee_q=mnee_q)
     ctx.paths_base = paths_base
     return ctx^
 
@@ -106,7 +110,7 @@ def resolve_suppress_gpu(
 
 @__llvm_metadata(MAX_THREADS_PER_BLOCK_METADATA=StaticTuple[Int32, 1](Int32(256)))
 @__llvm_metadata(`nvvm.minctasm`=SIMDLength(MINCTA_DIFFUSE))
-def shade_diffuse_gpu[mnee: Bool, defer_only: Bool = False](
+def shade_diffuse_gpu[mnee: Bool, defer_only: Bool = False, park: Bool = False](
     paths: Pointer[PathState, MutUntrackedOrigin],
     intersections: Pointer[Intersection, MutUntrackedOrigin],
     sd: SceneView,
@@ -164,7 +168,59 @@ def shade_diffuse_gpu[mnee: Bool, defer_only: Bool = False](
             gbuf_normal=gbuf_normal, gbuf_depth=gbuf_depth,
             gbuf_material_id=gbuf_material_id, gbuf_world_pos=gbuf_world_pos,
             frame_w=frame_w, frame_h=frame_h)
-    shade_diffuse[True, True, mnee, defer_only](path_ptr, inter, ctx_ptr[], mat, ctx_ptr[].guide_write, restir_io, tid if restir_has_state else -1)
+    shade_diffuse[True, True, mnee, defer_only, park](path_ptr, inter, ctx_ptr[], mat, ctx_ptr[].guide_write, restir_io, tid if restir_has_state else -1)
+
+
+# The MNEE queue (mnee_queue.mojo): shade_diffuse_gpu[..., park=True] parks the glass-blocked NEE samples; the host flushes
+# the queue with these three kernels when it is half full and after the last bounce round of a batch.
+# One thread an entry: the probe on the parked values, with the RNG the inline probe would have read.
+@__llvm_metadata(MAX_THREADS_PER_BLOCK_METADATA=StaticTuple[Int32, 1](Int32(256)))
+def resolve_mnee_queue_gpu(
+    sd: SceneView,
+    sobol_matrices: Pointer[UInt32, MutUntrackedOrigin],
+    q: Pointer[UInt8, MutUntrackedOrigin],
+):
+    var t = Int(block_idx.x * block_dim.x + thread_idx.x)
+    if t >= mnee_q_count(q):
+        return
+    var ep = mnee_q_entry(q, t)
+    var e = ep[]
+    var ctx = _shade_context(sd, sobol_matrices, 0)
+    var al = ctx.lights.area_lights[unsafe_offset=Int(e.light)]
+    var to_light = e.light_point - e.hit_point
+    var dist = sqrt(dot(to_light, to_light))
+    var pcg = PCG32(e.pcg_state, e.pcg_inc)
+    var r = _mnee_probe(ctx, e.normal, e.hit_point, e.alb, to_light * (Float32(1.0) / dist), dist, e.light_point, e.du, e.dv, al,
+                        e.inv_pdf_area, Float32(1.0), True, Float32(0), e.wavelengths, e.medium, e.throughput, Int(e.bounce), pcg)
+    ep[].contrib = r[1]
+
+
+# One thread a path: its entries, newest first, summed into its estimate (a fixed order, no float atomics), head cleared.
+@__llvm_metadata(MAX_THREADS_PER_BLOCK_METADATA=StaticTuple[Int32, 1](Int32(256)))
+def reduce_mnee_queue_gpu(
+    paths: Pointer[PathState, MutUntrackedOrigin],
+    q: Pointer[UInt8, MutUntrackedOrigin],
+    n_paths_dp: Int64,
+):
+    var p = Int(block_idx.x * block_dim.x + thread_idx.x)
+    if p >= Int(n_paths_dp):
+        return
+    var hp = mnee_q_head(q, p)
+    var k = Int(hp[unsafe_offset=0])
+    if k == 0:
+        return
+    var sum = SpectralSample(Float32(0))
+    while k != 0:
+        var ep = mnee_q_entry(q, k - 1)
+        sum += ep[].contrib
+        k = Int(ep[].prev)
+    hp[unsafe_offset=0] = Int32(0)
+    paths.unsafe_offset(p)[].estimate += sum
+
+
+@__llvm_metadata(MAX_THREADS_PER_BLOCK_METADATA=StaticTuple[Int32, 1](Int32(256)))
+def reset_mnee_queue_gpu(q: Pointer[UInt8, MutUntrackedOrigin]):
+    mnee_q_header(q)[unsafe_offset=0] = Int32(0)
 
 
 @__llvm_metadata(MAX_THREADS_PER_BLOCK_METADATA=StaticTuple[Int32, 1](Int32(256)))

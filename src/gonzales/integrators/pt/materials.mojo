@@ -915,7 +915,7 @@ def shade_hair[use_gpu: Bool, enqueue_shadow: Bool](
     _lobe_bounce[False](path_ptr, ctx, s, hit_base, cf[3], bsdf.hc.A1, pcg, curve_offset_eps(cf[4]))
 
 
-def _shade_diffuse_nee[use_gpu: Bool, enqueue_shadow: Bool, mnee: Bool = True, defer_only: Bool = False](
+def _shade_diffuse_nee[use_gpu: Bool, enqueue_shadow: Bool, mnee: Bool = True, defer_only: Bool = False, park: Bool = False](
     path_ptr: Pointer[PathState, MutUntrackedOrigin],
     ctx: ShadeContext,
     normal: Vec3f,
@@ -971,7 +971,7 @@ def _shade_diffuse_nee[use_gpu: Bool, enqueue_shadow: Bool, mnee: Bool = True, d
         if ctx.use_restir and path_ptr[].bounce == Int32(0):
             di_temporal_step(path_ptr, ctx, hit_point, normal, alb, pcg, restir_io, pixel_idx)
         else:
-            _nee_area_lights[enqueue_shadow, mnee](path_ptr, ctx, normal, hit_point, alb, u_light, u_bary1, u_bary2, pcg, guide_write,
+            _nee_area_lights[enqueue_shadow, mnee, False, park](path_ptr, ctx, normal, hit_point, alb, u_light, u_bary1, u_bary2, pcg, guide_write,
                 sms_io=sms_io_this_bounce, pixel_idx=pixel_idx)
 
         # ── ReSTIR GI (Phase 4.1's remaining half) ───────────────────────────────
@@ -1025,7 +1025,7 @@ def _shade_diffuse_nee[use_gpu: Bool, enqueue_shadow: Bool, mnee: Bool = True, d
 # Unified NEE core — comptime-specialized for CPU (use_gpu=False) and GPU (use_gpu=True).
 # Texture lookup samples the in-memory GpuTexture table on both backends (OIIO only as the CPU's no-table fallback).
 @always_inline
-def shade_diffuse[use_gpu: Bool, enqueue_shadow: Bool, mnee: Bool = True, defer_only: Bool = False](
+def shade_diffuse[use_gpu: Bool, enqueue_shadow: Bool, mnee: Bool = True, defer_only: Bool = False, park: Bool = False](
     path_ptr: Pointer[PathState, MutUntrackedOrigin],
     inter: Intersection,
     ctx: ShadeContext,
@@ -1068,7 +1068,7 @@ def shade_diffuse[use_gpu: Bool, enqueue_shadow: Bool, mnee: Bool = True, defer_
     var u_scat2 = ss.scat2
     var u_rr    = ss.rr
 
-    _shade_diffuse_nee[use_gpu, enqueue_shadow, mnee, defer_only](path_ptr, ctx, normal, hit_point, alb, gc.wo,
+    _shade_diffuse_nee[use_gpu, enqueue_shadow, mnee, defer_only, park](path_ptr, ctx, normal, hit_point, alb, gc.wo,
         u_light, u_bary1, u_bary2, u_env1, u_env2, pcg, guide_write, restir_io, pixel_idx, sms_io)
 
     # ── Scatter direction: 50/50 mixture of guide and cosine-weighted BSDF ──────

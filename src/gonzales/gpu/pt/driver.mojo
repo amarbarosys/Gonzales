@@ -3,6 +3,7 @@ from gonzales.core.geometry import TERMINAL_SEGMENT_GRACE_ROUNDS
 from gonzales.scene.appearance.materials import MatKind
 from gonzales.scene.shapes.primitives import Intersection, Sphere
 from gonzales.transport.render_state import PathState, ShadowTask, SuppressTask, SHADOW_SLOTS
+from gonzales.transport.mnee_queue import mnee_q_cap
 from gonzales.scene.accel.hw_rt import hw_rt_active, hw_shadow_slots
 from gonzales.transport.restir_di import DIReservoir
 from gonzales.integrators.pt.restir_vol import VolReservoir
@@ -18,7 +19,7 @@ from std.time import perf_counter_ns
 from gonzales.transport.shade_context import ShadeContext
 from gonzales.gpu.pt.media import sample_medium_gpu, update_medium_gpu
 from gonzales.gpu.scene import GpuSceneHandle
-from gonzales.gpu.pt.shade import GSMS_GROUP, GSMS_GROUPS, gsms_queue_reset_gpu, resolve_gsms_gpu, finish_gsms_gpu, shared_shade_context, resolve_suppress_gpu, shade_coated_conductor_gpu, shade_coated_diffuse_gpu, shade_conductor_gpu, shade_dielectric_gpu, shade_diffuse_gpu, shade_diffuse_transmit_gpu, shade_hair_gpu, shade_interface_gpu, shade_measured_gpu, shade_mix_gpu, shade_nee_preamble_gpu, shade_thin_dielectric_gpu
+from gonzales.gpu.pt.shade import GSMS_GROUP, GSMS_GROUPS, gsms_queue_reset_gpu, resolve_gsms_gpu, finish_gsms_gpu, shared_shade_context, resolve_mnee_queue_gpu, reduce_mnee_queue_gpu, reset_mnee_queue_gpu, resolve_suppress_gpu, shade_coated_conductor_gpu, shade_coated_diffuse_gpu, shade_conductor_gpu, shade_dielectric_gpu, shade_diffuse_gpu, shade_diffuse_transmit_gpu, shade_hair_gpu, shade_interface_gpu, shade_measured_gpu, shade_mix_gpu, shade_nee_preamble_gpu, shade_thin_dielectric_gpu
 from gonzales.transport.guide import guide_is_active
 from gonzales.gpu.pt.wavefront import sw_pack_shadow_tasks_gpu, sw_add_shadow_gpu, sw_resolve_shadow_gpu, compact_active_paths_gpu, compact_by_kind_gpu, accumulate_cone_gpu, accumulate_film_gpu, accumulate_film_wavefront_gpu, clear_film_gpu, clear_scalar_film_gpu, compact_curve_paths_gpu, compact_walking_gpu, adaptive_converge_gpu, adaptive_dilate_gpu, sss_walk_gpu, deactivate_paths_past_maxdepth_gpu, gen_primary_rays_gpu, gen_primary_rays_wavefront_gpu, reset_curve_counter_gpu, reset_restir_reservoirs_gpu, reset_restir_vol_reservoirs_gpu, reset_shadow_tasks_gpu, read_counter, reset_vol_used_gpu, resolve_curve_candidates_gpu, traverse_paths_gpu, rtcore_closest_hit_gpu, rtcore_shadow_rays_compact_gpu, rtcore_sss_walk_gpu, vulkaninterop_rt_traverse_paths_gpu
 
@@ -137,6 +138,43 @@ def _count_steps(handle: Pointer[GpuSceneHandle, MutUntrackedOrigin], sd: SceneV
     if handle[].bench[unsafe_offset=11] >= 6:
         _ = external_call["exit", NoneType, Int32](Int32(0))
 
+# The MNEE queue (transport/mnee_queue.mojo) takes the glass-blocked NEE samples of the diffuse kernel where its shadow ray is a
+# plain inline test (no hardware RT, media or guiding) and the queue was allocated.
+def _mnee_queue_ok(handle: Pointer[GpuSceneHandle, MutUntrackedOrigin], use_vulkan_rt: Bool) -> Bool:
+    return handle[].has_glass_material and not use_vulkan_rt and handle[].media.n_mediums == 0 \
+        and not guide_is_active(handle[].guide_write) and not env_on["GONZALES_MNEE_INLINE"]()
+
+
+# The entries waiting in the queue (its count word, capped at its capacity); this synchronizes the stream.
+def _mnee_q_pending(handle: Pointer[GpuSceneHandle, MutUntrackedOrigin]) raises -> Int:
+    var host = unsafe_alloc[UInt8](16)
+    handle[].ctx.enqueue_copy(host, handle[].mnee_buf.create_sub_buffer[DType.uint8](0, 16))
+    handle[].ctx.synchronize()
+    var words = host.unsafe_bitcast[Int32]()
+    var n = min(Int(words[unsafe_offset=0]), Int(words[unsafe_offset=1]))
+    host.unsafe_free()
+    return n
+
+
+# Probe every parked sample (one thread an entry), add each path's contributions to its estimate, empty the queue.
+def _mnee_q_flush(handle: Pointer[GpuSceneHandle, MutUntrackedOrigin], n_paths: Int, grid_paths: Int) raises:
+    var n = _mnee_q_pending(handle)
+    if n == 0:
+        return
+    var q = handle[].mnee_buf.unsafe_ptr().unsafe_mut_cast[True]().unsafe_origin_cast[MutUntrackedOrigin]()
+    var sd = handle[].scene_descriptor()
+    handle[].ctx.enqueue_function[resolve_mnee_queue_gpu](
+        sd, handle[].sobol_buf.unsafe_ptr().unsafe_bitcast[UInt32](), q,
+        grid_dim=ceildiv(n, 256), block_dim=256,
+    )
+    handle[].ctx.enqueue_function[reduce_mnee_queue_gpu](
+        handle[].path_buf.unsafe_ptr().unsafe_bitcast[PathState]().unsafe_mut_cast[True]().unsafe_origin_cast[MutUntrackedOrigin](),
+        q, Int64(n_paths),
+        grid_dim=grid_paths, block_dim=256,
+    )
+    handle[].ctx.enqueue_function[reset_mnee_queue_gpu](q, grid_dim=1, block_dim=1)
+
+
 def _gpu_bounce_kernels(
     handle: Pointer[GpuSceneHandle, MutUntrackedOrigin],
     n: Int, grid_full: Int,
@@ -176,6 +214,8 @@ def _gpu_bounce_kernels(
     # --rt-hardware: the deferred shadow tasks are freed by their resolve pass, so only the first round of a batch resets them.
     round: Int = 0,
     prev_live: Int = 0,
+    # gpu_render_wavefront flushes the MNEE queue (see _mnee_queue_ok); no other caller does, so none may park
+    mnee_queue: Bool = False,
 ) raises -> Int:
     comptime block_size = 256
     var grid_dim = grid_full
@@ -436,7 +476,13 @@ def _gpu_bounce_kernels(
             grid_dim=grid_full, block_dim=block_size,
         )
     var path_base = handle[].path_buf.unsafe_ptr().unsafe_bitcast[PathState]().unsafe_mut_cast[True]().unsafe_origin_cast[MutUntrackedOrigin]()
-    var shared_ctx = shared_shade_context(sd, handle[].sobol_buf.unsafe_ptr().unsafe_bitcast[UInt32](), path_base, use_restir, shadow_ptr)
+    # The diffuse kernel parks glass-blocked NEE samples in the MNEE queue (gpu_render_wavefront flushes it) instead of probing
+    # them where the whole round waits for the longest manifold solve; _mnee_queue_ok holds the conditions.
+    var park_ok = mnee_queue and not hw_shadow and not sw_shadow and not use_restir
+    var mnee_ptr = Pointer[UInt8, MutUntrackedOrigin].unsafe_dangling()
+    if park_ok:
+        mnee_ptr = handle[].mnee_buf.unsafe_ptr().unsafe_mut_cast[True]().unsafe_origin_cast[MutUntrackedOrigin]()
+    var shared_ctx = shared_shade_context(sd, handle[].sobol_buf.unsafe_ptr().unsafe_bitcast[UInt32](), path_base, use_restir, shadow_ptr, mnee_ptr)
     shared_ctx.guide = handle[].guide_read
     shared_ctx.guide_write = handle[].guide_write
     comptime assert size_of[ShadeContext]() <= 1024, "grow GpuSceneHandle.shade_ctx_buf"
@@ -446,26 +492,48 @@ def _gpu_bounce_kernels(
             path_ptr_c, live_idx, live_count, kind_idx, live_count.unsafe_offset(1 + Int(MatKind.diffuse)), Int32(MatKind.diffuse),
             grid_dim=grid_dim, block_dim=block_size,
         )
-        handle[].ctx.enqueue_function[shade_diffuse_gpu[True]](
-            handle[].path_buf.unsafe_ptr().unsafe_bitcast[PathState]().unsafe_mut_cast[True]().unsafe_origin_cast[MutUntrackedOrigin](),
-            handle[].inter_buf.unsafe_ptr().unsafe_bitcast[Intersection]().unsafe_mut_cast[True]().unsafe_origin_cast[MutUntrackedOrigin](),
-            sd,
-            handle[].sobol_buf.unsafe_ptr().unsafe_bitcast[UInt32](),
-            Int64(n), kind_idx, live_count.unsafe_offset(1 + Int(MatKind.diffuse)),
-            Int32(1) if use_restir else Int32(0),
-            restir_read,
-            restir_write,
-            handle[].atrous_normals_buf.unsafe_ptr().unsafe_bitcast[Float32](),
-            handle[].atrous_depth_buf.unsafe_ptr().unsafe_bitcast[Float32](),
-            handle[].gbuf_material_id_buf.unsafe_ptr().unsafe_bitcast[Int32](),
-            handle[].gbuf_worldpos_buf.unsafe_ptr().unsafe_bitcast[Float32](),
-            handle[].film.width,
-            handle[].film.height,
-            shadow_ptr,
-            handle[].shade_ctx_buf.unsafe_ptr().unsafe_bitcast[ShadeContext]().unsafe_mut_cast[True]().unsafe_origin_cast[MutUntrackedOrigin](),
-            grid_dim=grid_dim,
-            block_dim=block_size,
-        )
+        if park_ok:
+            handle[].ctx.enqueue_function[shade_diffuse_gpu[True, False, True]](
+                handle[].path_buf.unsafe_ptr().unsafe_bitcast[PathState]().unsafe_mut_cast[True]().unsafe_origin_cast[MutUntrackedOrigin](),
+                handle[].inter_buf.unsafe_ptr().unsafe_bitcast[Intersection]().unsafe_mut_cast[True]().unsafe_origin_cast[MutUntrackedOrigin](),
+                sd,
+                handle[].sobol_buf.unsafe_ptr().unsafe_bitcast[UInt32](),
+                Int64(n), kind_idx, live_count.unsafe_offset(1 + Int(MatKind.diffuse)),
+                Int32(1) if use_restir else Int32(0),
+                restir_read,
+                restir_write,
+                handle[].atrous_normals_buf.unsafe_ptr().unsafe_bitcast[Float32](),
+                handle[].atrous_depth_buf.unsafe_ptr().unsafe_bitcast[Float32](),
+                handle[].gbuf_material_id_buf.unsafe_ptr().unsafe_bitcast[Int32](),
+                handle[].gbuf_worldpos_buf.unsafe_ptr().unsafe_bitcast[Float32](),
+                handle[].film.width,
+                handle[].film.height,
+                shadow_ptr,
+                handle[].shade_ctx_buf.unsafe_ptr().unsafe_bitcast[ShadeContext]().unsafe_mut_cast[True]().unsafe_origin_cast[MutUntrackedOrigin](),
+                grid_dim=grid_dim,
+                block_dim=block_size,
+            )
+        else:
+            handle[].ctx.enqueue_function[shade_diffuse_gpu[True]](
+                handle[].path_buf.unsafe_ptr().unsafe_bitcast[PathState]().unsafe_mut_cast[True]().unsafe_origin_cast[MutUntrackedOrigin](),
+                handle[].inter_buf.unsafe_ptr().unsafe_bitcast[Intersection]().unsafe_mut_cast[True]().unsafe_origin_cast[MutUntrackedOrigin](),
+                sd,
+                handle[].sobol_buf.unsafe_ptr().unsafe_bitcast[UInt32](),
+                Int64(n), kind_idx, live_count.unsafe_offset(1 + Int(MatKind.diffuse)),
+                Int32(1) if use_restir else Int32(0),
+                restir_read,
+                restir_write,
+                handle[].atrous_normals_buf.unsafe_ptr().unsafe_bitcast[Float32](),
+                handle[].atrous_depth_buf.unsafe_ptr().unsafe_bitcast[Float32](),
+                handle[].gbuf_material_id_buf.unsafe_ptr().unsafe_bitcast[Int32](),
+                handle[].gbuf_worldpos_buf.unsafe_ptr().unsafe_bitcast[Float32](),
+                handle[].film.width,
+                handle[].film.height,
+                shadow_ptr,
+                handle[].shade_ctx_buf.unsafe_ptr().unsafe_bitcast[ShadeContext]().unsafe_mut_cast[True]().unsafe_origin_cast[MutUntrackedOrigin](),
+                grid_dim=grid_dim,
+                block_dim=block_size,
+            )
     else:
         handle[].ctx.enqueue_function[compact_by_kind_gpu](
             path_ptr_c, live_idx, live_count, kind_idx, live_count.unsafe_offset(1 + Int(MatKind.diffuse)), Int32(MatKind.diffuse),
@@ -977,6 +1045,7 @@ def gpu_render_wavefront(
             var live_paths = n_total
             var round_log = env_on["GONZALES_ROUND_LOG"]()
             var log_line = String("rounds live:")
+            var mq = _mnee_queue_ok(handle, use_vulkan_rt)
             _gsms_begin(handle)
             for round in range(gpu_max_rounds):
                 live_paths = _gpu_bounce_kernels(
@@ -984,9 +1053,11 @@ def gpu_render_wavefront(
                     use_vulkan_rt, interop_scene, interop_rays_buf, interop_results_buf,
                     mesh_material_idx_buf, mesh_al_idx_buf, n_meshes_vk,
                     instance_base_mesh_buf=instance_base_mesh_buf,
-                    round=round, prev_live=live_paths,
+                    round=round, prev_live=live_paths, mnee_queue=mq,
                 )
                 handle[].bench[unsafe_offset=14] += 1   # rounds, for the session report
+                if mq and round % 4 == 3 and _mnee_q_pending(handle) * 2 > mnee_q_cap(n_total):
+                    _mnee_q_flush(handle, n_total, grid_total)   # half full: a full queue probes inline, which is slow and order-dependent
                 if live_paths == n_total and not use_vulkan_rt:
                     live_paths = read_counter(handle[].ctx, handle[].active_count_buf, 0)   # the software path's compacted count
                 if round_log:
@@ -995,6 +1066,8 @@ def gpu_render_wavefront(
                     break
             if round_log:
                 print(log_line, "of", n_total)
+            if mq:
+                _mnee_q_flush(handle, n_total, grid_total)
             _gsms_resolve(handle)
             handle[].ctx.enqueue_function[accumulate_film_wavefront_gpu](
                 handle[].path_buf.unsafe_ptr().unsafe_bitcast[PathState]().unsafe_mut_cast[True]().unsafe_origin_cast[MutUntrackedOrigin](),

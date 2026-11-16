@@ -14,6 +14,7 @@ from gonzales.scene.appearance.media import Grid, MediumInterface, Medium, NvdbG
 from gonzales.scene.shapes.primitives import Instance, Intersection, PrimId, Sphere, TriangleMesh, mesh_points_floats, mesh_pos, mesh_vi
 from gonzales.core.sampling import FILTER_LUT_N, fill_filter_lut, ThinLens
 from gonzales.transport.render_state import FilmDims, FilterParams, PathState, ShadowTask, SHADOW_SLOTS
+from gonzales.transport.mnee_queue import mnee_q_cap, mnee_q_bytes
 from gonzales.scene.appearance.materials import GpuTexture, NormalSlopeMap
 from gonzales.core.env import env_str, env_on
 from std.os.path import exists, getsize
@@ -895,6 +896,8 @@ struct GpuSceneHandle(Movable):
     var bench: Pointer[Int, MutUntrackedOrigin]      # closest rays, shadow rays, trace ns, mode (1 frame sync, 2 trace timing)
     # one parked glass-chain emitter hit per path (SuppressTask), resolved by resolve_suppress_gpu; 32 bytes when unused
     var suppress_buf: DeviceBuffer[DType.uint8]
+    # the MNEE queue of glass-blocked NEE samples (mnee_queue.mojo), flushed by the PT driver; 32 bytes unless glass and not GONZALES_MNEE_INLINE
+    var mnee_buf: DeviceBuffer[DType.uint8]
     # glossy SMS roots parked by the conductor kernel for resolve_gsms_gpu (glossy_sms.gsms_park); gsms_cap of them
     var gsms_buf: DeviceBuffer[DType.uint8]
     var gsms_cap: Int
@@ -1615,6 +1618,7 @@ def gpu_upload_scene(
                 has_glass_material=has_glass_mat,
                 bench=_bench_counters(),
                 suppress_buf=_gpu_placeholder(ctx),
+                mnee_buf=_gpu_placeholder(ctx),
                 gsms_buf=_gpu_placeholder(ctx),
                 gsms_cap=0,
                 mat_kind_mask=kind_mask,
@@ -1714,6 +1718,19 @@ def gpu_alloc_pixel_buffers(handle: Pointer[GpuSceneHandle, MutUntrackedOrigin],
     var n_paths = n_pix * batch
     h.suppress_buf = dev_buf(ctx, n_paths * 32 if h.has_glass_material else 32)
     ctx.enqueue_memset(h.suppress_buf, UInt8(0))
+    var mnee_split = h.has_glass_material and not env_on["GONZALES_MNEE_INLINE"]()
+    var mnee_cap = mnee_q_cap(n_paths) if mnee_split else 0
+    h.mnee_buf = dev_buf(ctx, mnee_q_bytes(n_paths, mnee_cap) if mnee_split else 32)
+    ctx.enqueue_memset(h.mnee_buf, UInt8(0))     # no entries, every path's head empty
+    if mnee_split:
+        var hdr = unsafe_alloc[Int32](4)
+        hdr[unsafe_offset=0] = Int32(0)
+        hdr[unsafe_offset=1] = Int32(mnee_cap)
+        hdr[unsafe_offset=2] = Int32(n_paths)
+        hdr[unsafe_offset=3] = Int32(0)
+        ctx.enqueue_copy(h.mnee_buf.create_sub_buffer[DType.uint8](0, 16), hdr.unsafe_bitcast[UInt8]())
+        ctx.synchronize()
+        hdr.unsafe_free()
     h.gsms_cap = min(2 * n_paths, 1 << 17) if h.has_glass_material else 0
     h.gsms_buf = dev_buf(ctx, gsms_queue_bytes(h.gsms_cap))
     h.path_buf = dev_buf(ctx, n_paths * size_of[PathState]())

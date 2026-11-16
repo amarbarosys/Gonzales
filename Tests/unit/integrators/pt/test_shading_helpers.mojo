@@ -115,6 +115,7 @@ def _make_ctx(
         Float32(0),
         SIMD[DType.float32, 2](0),
         SIMD[DType.int32, 4](0),
+        Pointer[UInt8, MutUntrackedOrigin].unsafe_dangling(),
     )
 
 def _make_path(org: Vec3f, dir: Vec3f) -> PathState:
@@ -335,6 +336,7 @@ def test_build_geom_context_full_sphere_prim_returns_exact_analytic_normal() rai
         Float32(0),
         SIMD[DType.float32, 2](0),
         SIMD[DType.int32, 4](0),
+        Pointer[UInt8, MutUntrackedOrigin].unsafe_dangling(),
     )
 
     var org = Vec3f(0.0, 0.0, 5.0)

@@ -158,6 +158,8 @@ struct ShadeContext:
     var filter_glossy: Float32
     var clamp: SIMD[DType.float32, 2]   # SceneView.clamp
     var cycles: SIMD[DType.int32, 4]    # SceneView.cycles
+    # GPU PT only: the MNEE queue (mnee_queue.mojo) the diffuse kernel parks glass-blocked NEE samples in (park variant only).
+    var mnee_q: Pointer[UInt8, MutUntrackedOrigin]
 
 
 @always_inline
@@ -169,6 +171,7 @@ def _shade_context(
     shadow_tasks: Pointer[ShadowTask, MutUntrackedOrigin] = Pointer[ShadowTask, MutUntrackedOrigin].unsafe_dangling(),
     suppress_tasks: Pointer[SuppressTask, MutUntrackedOrigin] = Pointer[SuppressTask, MutUntrackedOrigin].unsafe_dangling(),
     gsms_queue: Pointer[UInt8, MutUntrackedOrigin] = Pointer[UInt8, MutUntrackedOrigin].unsafe_dangling(),
+    mnee_q: Pointer[UInt8, MutUntrackedOrigin] = Pointer[UInt8, MutUntrackedOrigin].unsafe_dangling(),
 ) -> ShadeContext:
     """A ShadeContext over a SceneView: the GPU kernels' and VCM's way to reach the shading code."""
     return ShadeContext(
@@ -189,4 +192,4 @@ def _shade_context(
             distant_lights=sd.distantLights, distant_count=Int(sd.distantLightCount),
             point_lights=sd.pointLights, point_count=Int(sd.pointLightCount),
             infinite_lights=sd.infiniteLights, infinite_count=Int(sd.infiniteLightCount),
-            spheres=sd.spheres, sphere_count=Int(sd.sphereCount), light_sampler=sd.lightSampler), filter_glossy=sd.filterGlossy, clamp=sd.clamp, cycles=sd.cycles)
+            spheres=sd.spheres, sphere_count=Int(sd.sphereCount), light_sampler=sd.lightSampler), filter_glossy=sd.filterGlossy, clamp=sd.clamp, cycles=sd.cycles, mnee_q=mnee_q)

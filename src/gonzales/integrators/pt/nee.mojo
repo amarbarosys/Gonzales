@@ -2,10 +2,12 @@
 from std.atomic import Atomic
 from std.collections import Array
 from std.math import sqrt
+from std.sys import size_of
 from gonzales.core.geometry import offset_point, RGB, Point3f, Point2f, Vec3f, dot, cross, fast_sincos, TWO_PI, _is_real_ptr
 from gonzales.core.geometry import point3f
 from gonzales.scene.appearance.materials import sss_boundary_lobe
 from gonzales.transport.render_state import PathState
+from gonzales.transport.mnee_queue import MneeEntry, mnee_q_park
 from gonzales.scene.shapes.primitives import Intersection, mesh_vi
 from gonzales.core.geometry import Ray
 from gonzales.scene.shapes.primitives import mesh_pos
@@ -22,7 +24,7 @@ from gonzales.integrators.pt.restir_sms import SMSReservoir, sms_reservoir_init,
 from gonzales.transport.texturing import _get_tri_verts
 from gonzales.transport.shade_context import ShadeContext
 from gonzales.transport.manifold import _emitter_face_normal, _mnee_chain, _mnee_bsdf_over_light, _mnee_chain_t_eta, _mnee_first_probe, _mnee_reproduce, _sms_solve_from_probe, _mnee_chain_transmittance, _mnee_pass
-from gonzales.core.spectrum import SpectralSample
+from gonzales.core.spectrum import SpectralSample, SampledWavelengths
 from gonzales.transport.glossy_sms import (GSMS_DEBUG, GLOSSY_SMS_MAX_TRIALS, GsmsTask, gsms_park, glossy_sms_stage, glossy_sms_root,
     glossy_sms_root_pos, glossy_sms_trials, glossy_sms_mis, glossy_sms_reproduce, glossy_sms_t_chain)
 from gonzales.transport.sms import mnee_orthonormal_basis
@@ -410,8 +412,7 @@ def _mnee_live(ctx: ShadeContext) -> Bool:
 
 
 @always_inline
-def _mnee_area_light_contribute(
-    path_ptr: Pointer[PathState, MutUntrackedOrigin],
+def _mnee_probe(
     ctx: ShadeContext,
     normal: Vec3f,
     hit_point: Vec3f,
@@ -425,9 +426,16 @@ def _mnee_area_light_contribute(
     inv_pdf_area: Float32,
     lobe_w: Float32,
     live: Bool,   # _mnee_live as the caller saw it when it marked the vertex
-    exit_eta: Float32 = Float32(0),   # a walk's exit: its lobe (sss_boundary_lobe) on top of `alb`
-) -> Bool:
-    """MNEE glass-caustic probing for one already-chosen area-light sample,
+    exit_eta: Float32,   # a walk's exit: its lobe (sss_boundary_lobe) on top of `alb`; 0 = none
+    wavelengths: SampledWavelengths,
+    medium: Int32,
+    throughput: SpectralSample,
+    bounce: Int,
+    mut pcg: PCG32,
+) -> Tuple[Bool, SpectralSample]:
+    """The probe on values, not on a path (the queue resolves it later): (used, the clamped contribution, zero when none).
+
+    MNEE glass-caustic probing for one already-chosen area-light sample,
     factored out of `_nee_area_lights` so ReSTIR's `di_resolve` can use the
     identical transport (it previously could not, which lost ALL light
     reaching a surface through a dielectric on the ReSTIR path -- ~9% of
@@ -466,29 +474,55 @@ def _mnee_area_light_contribute(
     # tangents (ldp_du_v/ldp_dv_v) — well-defined for a flat mesh triangle,
     # not for a curve's swept tube. Curve lights (kind==1) fall back to
     # plain (non-MNEE) shadow-ray NEE through glass.
+    var none = SpectralSample(Float32(0))
     if al.kind != Int8(0) or not live:
-        return False
+        return (False, none)
 
     # Most samples see no glass: skip the solver's heavy setup for them (it would return not-found untouched).
     var (probe_glass, probe_inter) = _mnee_first_probe(ctx, hit_point, shadow_dir, dist)
     if not probe_glass:
-        return False
+        return (False, none)
 
-    var pcg = PCG32(path_ptr[].pcgState, path_ptr[].pcgInc)
     var c = _mnee_chain(ctx, normal, hit_point, shadow_dir, dist, light_point, ldp_du_v, ldp_dv_v, pcg, probe_inter)
-    path_ptr[].pcgState = pcg.state
     if not c[0]:
-        return False
+        return (False, none)
     if not c[1]:
-        return True
+        return (True, none)
     # MIS against the BSDF path through the same chain (_mnee_bsdf_weight gives it the rest).
-    var t_med = _mnee_chain_transmittance(ctx, hit_point, c[3], c[2], light_point, path_ptr[].current_medium_idx, path_ptr[].wavelengths)
+    var t_med = _mnee_chain_transmittance(ctx, hit_point, c[3], c[2], light_point, medium, wavelengths)
     var w_mnee = _mnee_mis_weight(normal, hit_point, c[3], c[2], c[5], Float32(1.0) / inv_pdf_area, _mnee_pass(t_med))
-    var mnee_wt = _to_spec_diffuse_lit(ctx, alb, al.emission, path_ptr[].wavelengths) * t_med * (c[6] * c[5] * c[4] * lobe_w * inv_pdf_area * w_mnee)
+    var mnee_wt = _to_spec_diffuse_lit(ctx, alb, al.emission, wavelengths) * t_med * (c[6] * c[5] * c[4] * lobe_w * inv_pdf_area * w_mnee)
     if exit_eta > Float32(0):
         mnee_wt *= sss_boundary_lobe(c[6], exit_eta)
-    path_ptr[].estimate += _clamped(ctx, path_ptr[].throughput * mnee_wt, Int(path_ptr[].bounce))
-    return True
+    return (True, _clamped(ctx, throughput * mnee_wt, bounce))
+
+
+@always_inline
+def _mnee_area_light_contribute(
+    path_ptr: Pointer[PathState, MutUntrackedOrigin],
+    ctx: ShadeContext,
+    normal: Vec3f,
+    hit_point: Vec3f,
+    alb: RGB,
+    shadow_dir: Vec3f,
+    dist: Float32,
+    light_point: Vec3f,
+    ldp_du_v: Vec3f,
+    ldp_dv_v: Vec3f,
+    al: AreaLight,
+    inv_pdf_area: Float32,
+    lobe_w: Float32,
+    live: Bool,   # _mnee_live as the caller saw it when it marked the vertex
+    exit_eta: Float32 = Float32(0),   # a walk's exit: its lobe (sss_boundary_lobe) on top of `alb`
+) -> Bool:
+    """_mnee_probe on the path itself: its RNG, medium, throughput and bounce in, the contribution added to its estimate."""
+    var pcg = PCG32(path_ptr[].pcgState, path_ptr[].pcgInc)
+    var r = _mnee_probe(ctx, normal, hit_point, alb, shadow_dir, dist, light_point, ldp_du_v, ldp_dv_v, al, inv_pdf_area, lobe_w,
+                        live, exit_eta, path_ptr[].wavelengths, path_ptr[].current_medium_idx, path_ptr[].throughput,
+                        Int(path_ptr[].bounce), pcg)
+    path_ptr[].pcgState = pcg.state
+    path_ptr[].estimate += r[1]
+    return r[0]
 
 
 def _mnee_at_walk_exit(
@@ -795,7 +829,7 @@ def sms_temporal_step(
     return dielectric_found
 
 
-def _nee_area_lights[enqueue_shadow: Bool, mnee: Bool = True, defer_only: Bool = False](
+def _nee_area_lights[enqueue_shadow: Bool, mnee: Bool = True, defer_only: Bool = False, park: Bool = False](
     path_ptr: Pointer[PathState, MutUntrackedOrigin],
     ctx: ShadeContext,
     normal: Vec3f,
@@ -888,22 +922,41 @@ def _nee_area_lights[enqueue_shadow: Bool, mnee: Bool = True, defer_only: Bool =
             # independent of where the BSDF ray goes.
             var used_mnee = False
             comptime if mnee:
-                if _shadow_inline(ctx, guide_write) and live and al.kind == Int8(0):
-                    # A clear straight ray means no glass is in the way, so the MNEE probe is only needed when
-                    # something blocks it (the probe's segment lies inside the shadow ray's).
-                    if not _shadow_blocked(ctx, hit_point, shadow_dir, dist * Float32(0.9999)):
-                        path_ptr[].estimate += _clamped(ctx, path_ptr[].throughput * spec_w, Int(path_ptr[].bounce))
+                comptime if park:
+                    # The GPU diffuse kernel parks the blocked case's sample in the MNEE queue (mnee_queue.mojo) and the host
+                    # probes the whole queue at once; the host picks this variant only where the shadow ray is a plain
+                    # inline test (no media, deferral or guiding) and lobe_w is 1. A full queue probes here, as before.
+                    if live and al.kind == Int8(0):
+                        if not _shadow_blocked(ctx, hit_point, shadow_dir, dist * Float32(0.9999)):
+                            path_ptr[].estimate += _clamped(ctx, path_ptr[].throughput * spec_w, Int(path_ptr[].bounce))
+                        else:
+                            var path_index = (Int(path_ptr) - Int(ctx.paths_base)) // size_of[PathState]()
+                            var inv_pdf_area = al.total_area / light_sel_pdf_nee
+                            if not mnee_q_park(ctx.mnee_q, path_index, MneeEntry(
+                                    path_ptr[].throughput, SpectralSample(Float32(0)), normal, hit_point, light_point, ldp_du_v, ldp_dv_v, alb,
+                                    path_ptr[].wavelengths, path_ptr[].pcgState, path_ptr[].pcgInc, inv_pdf_area, Int32(light_idx),
+                                    path_ptr[].bounce, path_ptr[].current_medium_idx, Int32(path_index), Int32(0))):
+                                _ = _mnee_area_light_contribute(
+                                    path_ptr, ctx, normal, hit_point, alb, shadow_dir, dist,
+                                    light_point, ldp_du_v, ldp_dv_v, al, inv_pdf_area, lobe_w, True)
+                        used_mnee = True
+                else:
+                    if _shadow_inline(ctx, guide_write) and live and al.kind == Int8(0):
+                        # A clear straight ray means no glass is in the way, so the MNEE probe is only needed when
+                        # something blocks it (the probe's segment lies inside the shadow ray's).
+                        if not _shadow_blocked(ctx, hit_point, shadow_dir, dist * Float32(0.9999)):
+                            path_ptr[].estimate += _clamped(ctx, path_ptr[].throughput * spec_w, Int(path_ptr[].bounce))
+                        else:
+                            _ = _mnee_area_light_contribute(
+                                path_ptr, ctx, normal, hit_point, alb, shadow_dir, dist,
+                                light_point, ldp_du_v, ldp_dv_v, al,
+                                al.total_area / light_sel_pdf_nee, lobe_w, True)
+                        used_mnee = True
                     else:
-                        _ = _mnee_area_light_contribute(
+                        used_mnee = _mnee_area_light_contribute(
                             path_ptr, ctx, normal, hit_point, alb, shadow_dir, dist,
                             light_point, ldp_du_v, ldp_dv_v, al,
-                            al.total_area / light_sel_pdf_nee, lobe_w, True)
-                    used_mnee = True
-                else:
-                    used_mnee = _mnee_area_light_contribute(
-                        path_ptr, ctx, normal, hit_point, alb, shadow_dir, dist,
-                        light_point, ldp_du_v, ldp_dv_v, al,
-                        al.total_area / light_sel_pdf_nee, lobe_w, live)
+                            al.total_area / light_sel_pdf_nee, lobe_w, live)
             if not used_mnee:
                 var contrib = path_ptr[].throughput * spec_w
                 _shadow_contribute[enqueue_shadow, defer_only](path_ptr, ctx, hit_point, shadow_dir, dist * Float32(0.9999), contrib, guide_write)

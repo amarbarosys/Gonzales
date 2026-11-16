@@ -105,6 +105,7 @@ def _make_ctx_with_light(
         Float32(0),
         SIMD[DType.float32, 2](0),
         SIMD[DType.int32, 4](0),
+        Pointer[UInt8, MutUntrackedOrigin].unsafe_dangling(),
     )
 
 # ── Shared fixture: a small light triangle near (0,10,0) facing straight
