@@ -392,6 +392,23 @@ def _rtcore_merge(psc: Pointer[ParsedScene_Mojo, MutUntrackedOrigin]) -> _RtMerg
     return m^
 
 
+# The executable's directory with a trailing slash ("" when /proc/self/exe cannot be read).
+def _exe_dir() -> String:
+    var buf = unsafe_alloc[UInt8](4096)
+    var link = _cstr(String("/proc/self/exe"))
+    var n = external_call["readlink", Int, Pointer[UInt8, MutUntrackedOrigin], Pointer[UInt8, MutUntrackedOrigin], Int](
+        link, buf, 4095)
+    link.unsafe_free()
+    var dir = String()
+    var slash = -1
+    for i in range(max(n, 0)):
+        if buf[unsafe_offset=i] == UInt8(ord("/")):
+            slash = i
+    for i in range(slash + 1):
+        dir += chr(Int(buf[unsafe_offset=i]))
+    buf.unsafe_free()
+    return dir
+
 # The trace cubin sits next to the executable (make rt-cubin writes build/rt_trace.cubin, and the binary is build/gonzales).
 # A path relative to the working directory silently fell back to the Vulkan ray-query path whenever a scene was rendered
 # from its own directory. GONZALES_RTCORE_CUBIN overrides.
@@ -399,24 +416,18 @@ def _rtcore_cubin_path() -> String:
     var env = env_str["GONZALES_RTCORE_CUBIN"]()
     if env != "":
         return env
-    var buf = unsafe_alloc[UInt8](4096)
-    var link = _cstr(String("/proc/self/exe"))
-    var n = external_call["readlink", Int, Pointer[UInt8, MutUntrackedOrigin], Pointer[UInt8, MutUntrackedOrigin], Int](
-        link, buf, 4095)
-    link.unsafe_free()
-    var path = String("build/rt_trace.cubin")
-    if n > 0:
-        var slash = -1
-        for i in range(n):
-            if buf[unsafe_offset=i] == UInt8(ord("/")):
-                slash = i
-        if slash >= 0:
-            path = String()
-            for i in range(slash + 1):
-                path += chr(Int(buf[unsafe_offset=i]))
-            path += "rt_trace.cubin"
-    buf.unsafe_free()
-    return path
+    var dir = _exe_dir()
+    return dir + "rt_trace.cubin" if dir.byte_length() > 0 else String("build/rt_trace.cubin")
+
+# The spectral tables and Sobol data: src/gonzales/data relative to the working directory when it is there (running
+# from the repo root, as before), else the same path in the checkout the executable was built in (BUILD_DIR/gonzales
+# sits one level below the root), so a scene renders from its own directory too. GONZALES_DATA_DIR overrides.
+def data_dir_default() -> String:
+    var rel = String("src/gonzales/data")
+    if exists(rel):
+        return rel
+    var beside = _exe_dir() + "../" + rel
+    return beside if exists(beside) else rel
 
 
 # Instanced scenes are traced through the Vulkan-built top-level structure as it is: the hardware reports the

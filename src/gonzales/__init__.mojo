@@ -5,7 +5,7 @@ from std.time import perf_counter_ns
 from std.os import setenv
 from gonzales.core.env import env_str, env_on, env_set, env_warn_unknown, env_list
 from std.memory.alloc import unsafe_alloc
-from gonzales.app.pipeline import _generate_sobol_matrices, parse_and_render, render_interactive, debug_trace_pixel, debug_render_vulkanrt, bake_scene
+from gonzales.app.pipeline import _generate_sobol_matrices, data_dir_default, parse_and_render, render_interactive, debug_trace_pixel, debug_render_vulkanrt, bake_scene
 from gonzales.core.spectrum import load_spectral_context, spectral_handle, SpectralContext
 from gonzales.scene.description.pbrt_parser import ParsedScene_Mojo
 from gonzales.scene.shapes.ply_prefetch import PlyPrefetch, scan_plys
@@ -376,7 +376,7 @@ def main() raises:
             ckpt.path = ckpt.resume     # a resumed render keeps its checkpoint going
         ckpt.scene = scene_path
         ckpt.seed_given = seed_override >= 0
-    var data_dir = env_str["GONZALES_DATA_DIR"]("src/gonzales/data")
+    var data_dir = env_str["GONZALES_DATA_DIR"](data_dir_default())
 
     var path_len = scene_path.byte_length()
     var path_cstr = unsafe_alloc[UInt8](path_len + 1)
