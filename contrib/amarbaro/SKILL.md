@@ -103,11 +103,12 @@ GPU PT not run-to-run reproducible, 4.5% of Cornell pixels differ (docs/08_rende
 
 ```
 cd path/to/Gonzales
-uv venv --python 3.14 .venv && uv sync          # uv picks 3.15 otherwise: max 26.7 ships cp314 wheels only
-make release BUILD_DIR=build-amd CUDA_HOME=/nonexistent MOJO_BUILD_FLAGS="--target-accelerator gfx1100"
+uv sync                                         # .python-version pins 3.14 (max 26.7 ships cp314 wheels only)
+make release-amd AMD_TARGET=gfx1100             # default AMD_TARGET stays gfx1030 (RX 6800)
 ```
-- Call `release` directly: `release-amd` hard-codes `gfx1030` in its sub-make (Makefile:353-354; README.md:19-21).
-  361 s, 8.0 GB peak RSS, 75.8 MB binary. `make dev` builds a hint-free copy in ~3 min instead of ~10 (Makefile:345-351).
+- On checkouts before these fixes use `uv venv --python 3.14` and
+  `make release BUILD_DIR=build-amd CUDA_HOME=/nonexistent MOJO_BUILD_FLAGS="--target-accelerator gfx1100"`.
+  282-361 s, 4.9-8.0 GB peak RSS, 75.8 MB binary. `make dev` builds a hint-free copy in ~3 min instead of ~10 (Makefile:345-351).
 - System deps (Arch extra): `openimageio ptex vulkan-headers glfw`.
   CUDA/OptiX/NanoVDB absent -> their bridges build as stubs (expected; Makefile:98-130).
 
@@ -124,8 +125,9 @@ make release BUILD_DIR=build-amd CUDA_HOME=/nonexistent MOJO_BUILD_FLAGS="--targ
 
 ## Run
 
-- Run from the repo root: the rpath is the relative `build-amd` and data files (`src/gonzales/data/...`) are opened
-  relative to the cwd; elsewhere it fails (`liboiiobridge.so` not found, `cannot open Sobol data file`).
+- Runs from any directory (absolute rpath; `src/gonzales/data` falls back to the binary's checkout,
+  `GONZALES_DATA_DIR` overrides; src/gonzales/app/pipeline.mojo `data_dir_default`). Older checkouts fail outside the
+  repo root (`liboiiobridge.so` not found, `cannot open Sobol data file`).
 - Output goes to the scene's `Film "string filename"` in the cwd: move it away after each run.
 - GPU: `timeout 240 build-amd/gonzales --gpu --spp 64 SCENE.pbrt`
 - Flags used most: `--gpu --no-denoise --spp N --resolution WxH --seed N --list-env`.
@@ -187,7 +189,7 @@ Release notes: `Documentation/ReleaseNotes/0.4.md` (Moana on 12 GB, run recipe);
   `gaussian xradius 5 sigma 2.5`: 6 px edges at 512 px. pbrt default (no PixelFilter, or `gaussian` alone: radius 1.5,
   sigma 0.5) gives 1 px edges. The denoiser does not cause it (`--no-denoise` keeps the 6 px) (README.md:22-23).
 - PSNR/sharpness of renders: Laplacian variance is swamped by noise at <= 256 spp; measure an edge's 10-90 % width.
-- The `release-amd` target name says gfx1030: do not use it for the 7900 XTX.
+- `release-amd` without `AMD_TARGET=gfx1100` still builds for gfx1030 (RX 6800), not the 7900 XTX.
 - `--help` lists a subset of the flags; read `src/gonzales/__init__.mojo:204-340` for `--sppm`, `--vcm`, `--rt-hardware`.
 - Read the log for `Warning: unsupported` lines: a skipped shape or a grey material is not an error exit.
 - `docs/A1_feature_status.md` (2026-08-05) is stale: says `measured` is a rough conductor and NanoVDB unsupported; chapters
