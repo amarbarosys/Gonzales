@@ -1,7 +1,7 @@
 from std.memory.alloc import unsafe_alloc
 from std.ffi import external_call
 from std.math import sqrt, max, abs
-from gonzales.core.diagnostics import warn_unsupported
+from gonzales.core.diagnostics import warn, warn_unsupported
 from gonzales.scene.description.lexer import (PbrtScanner, scanner_parse_quoted_string, _psc_collect_params, ParameterDictionary)
 from gonzales.scene.description.parse_types import NamedMaterial, SceneParseState, PSC_NAME_MAX, scene_path
 from gonzales.core.geometry import RGB
@@ -436,11 +436,11 @@ def _sss_reflectance(s: Pointer[SceneParseState, MutUntrackedOrigin],
                 _ = external_call["free_texture_rgb", Int32,
                     Pointer[Float32, MutUntrackedOrigin]](ptr)
             else:
-                print("Warning: subsurface \"reflectance\" texture '" + tname +
+                warn("Warning: subsurface \"reflectance\" texture '" + tname +
                       "' (" + fstr + ") failed to load — falling back to grey 0.5, which will render colourless.")
             fbuf.unsafe_free(); data_out.unsafe_free(); w_out.unsafe_free(); h_out.unsafe_free()
             return out
-    print("Warning: subsurface \"reflectance\" names texture '" + tname +
+    warn("Warning: subsurface \"reflectance\" names texture '" + tname +
           "', which is not a constant or imagemap — using grey 0.5.")
     return RGB(Float32(0.5))
 
@@ -640,7 +640,7 @@ def _psc_handle_make_named_material(handle: Pointer[PbrtScanner, MutUntrackedOri
                               + String(unsafe_from_utf8_ptr=mat_name.as_imm())
                               + "' eta falls back to 0.5:", scene_path(s[unsafe_offset=0].scene_dir, eta_name, "conductor eta spectrum"))
                 elif eta_name != "":
-                    print("Warning: unknown named spectrum '" + eta_name
+                    warn("Warning: unknown named spectrum '" + eta_name
                           + "' for eta — falling back to 0.5. Supported: metal-{Ag,Al,Au,Cu,CuZn,TiO2,MgO}-*, glass-{BK7,BAF10,FK51A,LASF9,F5,F10,F11}, or a .spd file path.")
     if params.has("intIOR"):
         # Float-only alias for dielectric eta; no RGB/spectrum/named form.
@@ -673,7 +673,7 @@ def _psc_handle_make_named_material(handle: Pointer[PbrtScanner, MutUntrackedOri
                           + String(unsafe_from_utf8_ptr=mat_name.as_imm())
                           + "' k falls back to 0.5:", scene_path(s[unsafe_offset=0].scene_dir, k_name, "conductor k spectrum"))
             elif k_name != "":
-                print("Warning: unknown named spectrum '" + k_name
+                warn("Warning: unknown named spectrum '" + k_name
                       + "' for k — falling back to 0.5. Supported: metal-{Ag,Al,Au,Cu,CuZn,TiO2,MgO}-*, or a .spd file path.")
 
     # "reflectance": either an RGB/float value, OR a texture reference --
@@ -775,13 +775,13 @@ def _psc_handle_make_named_material(handle: Pointer[PbrtScanner, MutUntrackedOri
                                 is_known = True
                                 break
                     if is_known:
-                        print("Warning: texture '" + tex_name + "' combines two"
+                        warn("Warning: texture '" + tex_name + "' combines two"
                               + " different textures (a texture-valued scale or"
                               + " mix amount over a textured base) — gonzales"
                               + " folds texture graphs into one lookup, so this"
                               + " falls back to flat albedo.")
                     else:
-                        print("Warning: material references undefined texture '"
+                        warn("Warning: material references undefined texture '"
                               + tex_name + "' for reflectance — falling back to"
                               + " flat albedo. (Unsupported texture classes are"
                               + " reported by handle_texture at parse time.)")
@@ -868,7 +868,7 @@ def _psc_handle_make_named_material(handle: Pointer[PbrtScanner, MutUntrackedOri
             var refl = min(Float32(0.95), max(Float32(0.03), mean_lum))
             rgb = RGB(refl)
         else:
-            print("Warning: could not read measured BRDF file '" + bsdf_path + "' — using default grey")
+            warn("Warning: could not read measured BRDF file '" + bsdf_path + "' — using default grey")
 
     # "subsurface": resolve the interior medium's scattering coefficients and
     # register it, so the dielectric surface selected above actually bounds a
@@ -917,16 +917,16 @@ def _psc_handle_make_named_material(handle: Pointer[PbrtScanner, MutUntrackedOri
             if found:
                 have_sigmas = True
                 if sss_g != Float32(0):
-                    print("Warning: subsurface preset '" + preset_name + "' specifies REDUCED scattering coefficients — ignoring \"g\" (matching pbrt).")
+                    warn("Warning: subsurface preset '" + preset_name + "' specifies REDUCED scattering coefficients — ignoring \"g\" (matching pbrt).")
                 sss_g = Float32(0)
             else:
-                print("Warning: unknown subsurface preset '" + preset_name + "' — falling back to pbrt's default coefficients. Known presets: Apple, Chicken1, Chicken2, Cream, Ketchup, Marble, Potato, Skimmilk, Skin1, Skin2, Spectralon, Wholemilk.")
+                warn("Warning: unknown subsurface preset '" + preset_name + "' — falling back to pbrt's default coefficients. Known presets: Apple, Chicken1, Chicken2, Cream, Ketchup, Marble, Potato, Skimmilk, Skin1, Skin2, Spectralon, Wholemilk.")
         elif params.has("sigma_a") or params.has("sigma_s"):
             # 2. sigma_a and sigma_s directly. pbrt makes it an error to give
             # one without the other; warn and fill the missing one from the
             # default rather than aborting the whole render.
             if not (params.has("sigma_a") and params.has("sigma_s")):
-                print("Warning: subsurface material gives only one of \"sigma_a\"/\"sigma_s\" — pbrt requires both; using the default for the missing one.")
+                warn("Warning: subsurface material gives only one of \"sigma_a\"/\"sigma_s\" — pbrt requires both; using the default for the missing one.")
             sig_a = _mb_float_or_rgb(params, "sigma_a", RGB(Float32(0.0011), Float32(0.0024), Float32(0.014)))
             sig_s = _mb_float_or_rgb(params, "sigma_s", RGB(Float32(2.55), Float32(3.21), Float32(3.77)))
             have_sigmas = True
@@ -1038,7 +1038,7 @@ def _psc_handle_make_named_material(handle: Pointer[PbrtScanner, MutUntrackedOri
             var aff = _resolve_affine_rgb(s, disp_tex, 0)
             if aff.ok and aff.tex_idx >= 0:
                 if abs(aff.bias.r) > Float32(1e-6):
-                    print("Warning: displacement texture '" + disp_tex
+                    warn("Warning: displacement texture '" + disp_tex
                           + "' resolves to an affine graph with a non-zero"
                           + " offset, which the bump path cannot represent —"
                           + " applying the scale only.")
@@ -1119,7 +1119,7 @@ def _psc_handle_make_named_material(handle: Pointer[PbrtScanner, MutUntrackedOri
             if trans_tex == "":
                 dt_tex_lobes = Int8(1)
             else:
-                print("Warning: a diffusetransmission material has different reflectance and transmittance textures ('"
+                warn("Warning: a diffusetransmission material has different reflectance and transmittance textures ('"
                       + refl_tex_name + "', '" + trans_tex + "'); the reflectance texture is used for both.")
         elif tex_idx_for_mat == Int32(-1) and trans_tex != "":
             for ti in range(len(s[unsafe_offset=0].tex_names)):

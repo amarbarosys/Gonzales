@@ -2,6 +2,7 @@ from std.collections import Array
 from gonzales.core.geometry import RGB
 from gonzales.scene.shapes.displacement import DisplacedMesh, Rmip
 from std.os.path import exists
+from gonzales.core.diagnostics import warn
 from gonzales.scene.shapes.ply_prefetch import PlyPrefetch
 
 
@@ -23,8 +24,8 @@ def scene_path(scene_dir: String, name: String, what: String) -> String:
     depending on whichever loader happens to touch the file later."""
     var path = name if name.startswith("/") else scene_dir + name
     if name.byte_length() > 0 and not exists(path):
-        print("Warning: " + what + " file not found: '" + path
-              + "' -- it will render as a flat default instead.")
+        warn("Warning: " + what + " file not found: '" + path
+             + "' -- it will render as a flat default instead.")
     return path
 
 # ── ParsedScene constants ─────────────────────────────────────────────────────

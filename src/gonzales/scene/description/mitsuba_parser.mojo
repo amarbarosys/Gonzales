@@ -2,7 +2,7 @@ from std.collections import Array
 from std.memory.alloc import unsafe_alloc
 from std.math import tan, atan2, sqrt, cos, sin
 from std.ffi import external_call
-from gonzales.core.diagnostics import warn_unsupported
+from gonzales.core.diagnostics import warn, warn_unsupported
 from gonzales.scene.description.lexer import is_whitespace
 from gonzales.scene.description.parse_types import SceneParseState, NamedMaterial, scene_path
 from gonzales.core.geometry import RGB, PI, Vec3f, Point3f
@@ -826,12 +826,12 @@ def _mit_process_shape(tags: List[MitsubaTag], shape_idx: Int, end: Int,
     if shape_type == "serialized":
         var fname_idx = _mit_find_child_by_attr(tags, shape_idx, end, "string", "name", "filename")
         if fname_idx < 0:
-            print("Warning: Mitsuba 'serialized' shape with no filename -- skipped.")
+            warn("Warning: Mitsuba 'serialized' shape with no filename -- skipped.")
             return
         var full_path = scene_path(s_ptr[unsafe_offset=0].scene_dir, _mxml_find_attr(tags[fname_idx], "value"), "Mitsuba mesh")
         var mesh = load_mitsuba_serialized(full_path)
         if mesh.n_verts == Int32(0):
-            print("Warning: failed to load Mitsuba mesh:", full_path)
+            warn("Warning: failed to load Mitsuba mesh: " + full_path)
             return
         nv = mesh.n_verts
         nt = mesh.n_tris

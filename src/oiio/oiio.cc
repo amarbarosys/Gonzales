@@ -9,6 +9,8 @@
 #include <cstring>
 #include <iostream>
 #include <memory>
+#include <mutex>
+#include <string>
 #include <vector>
 
 std::shared_ptr<OIIO::TextureSystem> textureSystem;
@@ -743,6 +745,26 @@ extern "C" void ptex_set_plan(int cap, int base, long long pool_bytes) {
         ptex_pool_budget = pool_bytes;
 }
 extern "C" void ptex_set_paging(int on) { ptex_paging_on = on != 0; }
+
+// Warnings of this run (core/diagnostics.mojo), kept besides the printed line for --check and --json.
+static std::vector<std::string> diag_list;
+static std::mutex diag_mu;
+extern "C" void diag_add(const char* s, int n) {
+        std::lock_guard<std::mutex> g(diag_mu);
+        diag_list.emplace_back(s, n);
+}
+extern "C" int diag_count() {
+        std::lock_guard<std::mutex> g(diag_mu);
+        return int(diag_list.size());
+}
+// Copies warning i as a NUL-terminated string of at most cap-1 bytes; returns its length.
+extern "C" int diag_get(int i, char* buf, int cap) {
+        std::lock_guard<std::mutex> g(diag_mu);
+        int n = std::min(int(diag_list[size_t(i)].size()), cap - 1);
+        std::memcpy(buf, diag_list[size_t(i)].data(), size_t(n));
+        buf[n] = 0;
+        return n;
+}
 
 // Every level carries a one-texel border copied from the neighbouring faces, so a bilinear
 // lookup blends across face edges: a 2^ul x 2^vl level takes (2^ul + 2) * (2^vl + 2) texels.

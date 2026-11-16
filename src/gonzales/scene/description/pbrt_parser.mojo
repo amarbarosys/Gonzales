@@ -12,7 +12,7 @@ from std.subprocess import run
 from std.os.path import exists
 from gonzales.scene.appearance.footprint import camera_footprint
 from gonzales.core.sensors import named_sensor_is_supported, named_sensor_srgb_matrix
-from gonzales.core.diagnostics import warn_unsupported, warn_unsupported_in
+from gonzales.core.diagnostics import warn, warn_unsupported, warn_unsupported_in
 from gonzales.scene.description.lexer import PbrtScanner, scanner_open, scanner_free, scanner_is_at_end, scanner_scan_token, scanner_parse_quoted_string, scanner_scan_char, scanner_scan_float, _psc_streq, _psc_collect_params, ParameterDictionary, _psc_skip_params, _psc_skip_line
 from gonzales.scene.description.parse_types import (SceneParseState, MeshAccum, NamedMaterial, scene_path,
                            ctm_push, ctm_pop, PSC_NAME_MAX, PSC_FILE_MAX)
@@ -332,7 +332,7 @@ def _psc_handle_filter(handle: Pointer[PbrtScanner, MutUntrackedOrigin],
         # in the corpus does today, which is exactly when a silent fallback
         # goes unnoticed.
         if not _psc_streq(sbuf, "gaussian"):
-            print("Warning: PixelFilter type not implemented -- rendering with"
+            warn("Warning: PixelFilter type not implemented -- rendering with"
                   + " a Gaussian filter instead. Supported: gaussian, box,"
                   + " triangle.")
         s[unsafe_offset=0].filter_type = Int32(0)
@@ -354,7 +354,7 @@ def _psc_handle_film(handle: Pointer[PbrtScanner, MutUntrackedOrigin],
     var is_gbuf = _psc_streq(sbuf, "gbuffer")
     sbuf.unsafe_free()
     if is_gbuf:
-        print("Warning: Film \"gbuffer\" — rendering as \"rgb\"; the auxiliary"
+        warn("Warning: Film \"gbuffer\" — rendering as \"rgb\"; the auxiliary"
               + " G-buffer channels (albedo/normal/depth/variance) are NOT"
               + " written into the output EXR.")
     var params = _psc_collect_params(handle)
@@ -373,7 +373,7 @@ def _psc_handle_film(handle: Pointer[PbrtScanner, MutUntrackedOrigin],
         # matching functions). Exposure and white balance below are still
         # applied exactly, so this differs from pbrt only by the sensor's
         # colour-response shape.
-        print("Warning: film sensor '" + sensor_str + "' not modelled — using cie1931 response (exposure and whitebalance still applied).")
+        warn("Warning: film sensor '" + sensor_str + "' not modelled — using cie1931 response (exposure and whitebalance still applied).")
     s[unsafe_offset=0].film_sensor = sensor_str
     s[unsafe_offset=0].film_max_comp = params.get_float("maxcomponentvalue", s[unsafe_offset=0].film_max_comp)
     var cw = params.get_floats("cropwindow")
@@ -1154,10 +1154,10 @@ def handle_bilinearmesh_shape(handle: Pointer[PbrtScanner, MutUntrackedOrigin],
             indices.append(Int32(0)); indices.append(Int32(1))
             indices.append(Int32(2)); indices.append(Int32(3))
         else:
-            print("Warning: Shape \"bilinearmesh\" with no \"integer indices\" needs exactly 4 points per pbrt's own single-patch default; got", n_pts, "-- shape dropped.")
+            warn("Warning: Shape \"bilinearmesh\" with no \"integer indices\" needs exactly 4 points per pbrt's own single-patch default; got " + String(n_pts) + " -- shape dropped.")
             return
     elif len(indices) % 4 != 0:
-        print("Warning: Shape \"bilinearmesh\" \"integer indices\" length", len(indices), "is not a multiple of 4 -- shape dropped.")
+        warn("Warning: Shape \"bilinearmesh\" \"integer indices\" length " + String(len(indices)) + " is not a multiple of 4 -- shape dropped.")
         return
 
     var n_patches = len(indices) // 4
@@ -1168,7 +1168,7 @@ def handle_bilinearmesh_shape(handle: Pointer[PbrtScanner, MutUntrackedOrigin],
         var i01 = indices[patch * 4 + 2]
         var i11 = indices[patch * 4 + 3]
         if i00 >= n_pts or i10 >= n_pts or i01 >= n_pts or i11 >= n_pts or i00 < 0 or i10 < 0 or i01 < 0 or i11 < 0:
-            print("Warning: Shape \"bilinearmesh\" patch", patch, "indexes past the end of \"P\" -- shape dropped.")
+            warn("Warning: Shape \"bilinearmesh\" patch " + String(patch) + " indexes past the end of \"P\" -- shape dropped.")
             return
         idx.append(i00); idx.append(i10); idx.append(i01)
         idx.append(i10); idx.append(i11); idx.append(i01)
@@ -1241,7 +1241,7 @@ def _psc_apply_shape_alpha(s: Pointer[SceneParseState, MutUntrackedOrigin],
         s[unsafe_offset=0].alpha_mask_w.append(wh[unsafe_offset=0])
         s[unsafe_offset=0].alpha_mask_h.append(wh[unsafe_offset=1])
     else:
-        print("Warning: could not load alpha texture", file, "-- the shape renders opaque")
+        warn("Warning: could not load alpha texture " + String(file) + " -- the shape renders opaque")
     data.unsafe_free(); wh.unsafe_free()
 
 def handle_shape(handle: Pointer[PbrtScanner, MutUntrackedOrigin],
@@ -2170,11 +2170,11 @@ def parse_scene_file(handle: Pointer[PbrtScanner, MutUntrackedOrigin],
             else:
                 var inc_str = String(unsafe_from_utf8_ptr=inc_name.as_imm())
                 if inc_str.endswith(".xz"):
-                    print("Warning: cannot open include (decompress first with xz -dk):", inc_str)
+                    warn("Warning: cannot open include (decompress first with xz -dk): " + inc_str)
                 elif inc_str.endswith(".gz"):
-                    print("Warning: cannot open include (gzip decompression failed):", inc_str)
+                    warn("Warning: cannot open include (gzip decompression failed): " + inc_str)
                 else:
-                    print("Warning: cannot open include:", inc_str)
+                    warn("Warning: cannot open include: " + inc_str)
             scanner_free(sub_handle)
             if ends_gz:
                 stripped.unsafe_free()
@@ -2572,7 +2572,7 @@ def finalize_scene(s: Pointer[SceneParseState, MutUntrackedOrigin],
             continue
         var (mok, mb) = load_measured_brdf_full(mpath)
         if not mok:
-            print("Warning: could not load full measured BRDF '" + mpath + "' (real MeasuredBxDF unavailable, using approximation)")
+            warn("Warning: could not load full measured BRDF '" + mpath + "' (real MeasuredBxDF unavailable, using approximation)")
         measured_paths.append(mpath)
         measured_ok.append(mok)
         measured_list.append(mb)
@@ -3418,7 +3418,7 @@ def finalize_scene(s: Pointer[SceneParseState, MutUntrackedOrigin],
         blas_primid_counts[unsafe_offset=tmpl] = t_tris
     cg_first.unsafe_free(); cg_count.unsafe_free(); curve_tmpl.unsafe_free()
     if curves_dropped > 0:
-        print("Warning:", curves_dropped, "curve(s) dropped: they are in object templates whose meshes could not be merged.")
+        warn("Warning: " + String(curves_dropped) + " curve(s) dropped: they are in object templates whose meshes could not be merged.")
 
     var keep = unsafe_alloc[Int32](max(Int(total_instances), 1))
     total_instances = Int32(_cull_small_instances(s, psc, tmpl_bounds, keep))
@@ -3899,8 +3899,8 @@ def finalize_scene(s: Pointer[SceneParseState, MutUntrackedOrigin],
             parallelize(nmap_worker, min(num_performance_cores(), n_nm))
         for k in range(n_nm):
             if nonsquare[unsafe_offset=k * 2] > Int32(0):
-                print("warning: normal map is not square (", Int(nonsquare[unsafe_offset=k * 2]), "x", Int(nonsquare[unsafe_offset=k * 2 + 1]),
-                      "), SMS manifold walk will treat this surface as smooth")
+                warn("warning: normal map is not square (" + String(Int(nonsquare[unsafe_offset=k * 2])) + " x " + String(Int(nonsquare[unsafe_offset=k * 2 + 1]))
+                 + "), SMS manifold walk will treat this surface as smooth")
         is_nmap.unsafe_free(); nm_idx.unsafe_free(); nonsquare.unsafe_free(); next_nm.unsafe_free()
         psc[unsafe_offset=0].nmaps = nmaps
 
@@ -4141,7 +4141,7 @@ def finalize_scene(s: Pointer[SceneParseState, MutUntrackedOrigin],
                 # not contain (a non-emissive volume); only a missing DENSITY
                 # grid is worth warning about.
                 if s[unsafe_offset=0].nvdb_gridnames[i] != "temperature":
-                    print("Warning: could not load nanovdb grid '" + s[unsafe_offset=0].nvdb_gridnames[i] + "' from:", path_str)
+                    warn("Warning: could not load nanovdb grid '" + s[unsafe_offset=0].nvdb_gridnames[i] + "' from: " + path_str)
                 blob = Pointer[UInt8, MutUntrackedOrigin].unsafe_dangling()
             else:
                 var blob_size = Int(nvdb_size(handle))

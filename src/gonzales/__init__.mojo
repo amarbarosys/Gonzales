@@ -4,6 +4,7 @@ from std.sys.info import _accelerator_arch
 from std.time import perf_counter_ns
 from std.os import setenv
 from gonzales.core.env import env_str, env_on, env_set, env_warn_unknown, env_list
+from gonzales.core.diagnostics import collected_warnings
 from std.memory.alloc import unsafe_alloc
 from gonzales.app.pipeline import _generate_sobol_matrices, data_dir_default, parse_and_render, render_interactive, debug_trace_pixel, debug_render_vulkanrt, bake_scene
 from gonzales.core.spectrum import load_spectral_context, spectral_handle, SpectralContext
@@ -170,6 +171,7 @@ def main() raises:
     var use_vulkan_rt_shade = False
     var rt_hardware = False
     var bake = False
+    var check_only = False
     var use_vcm_wavefront = "intel" in _accelerator_arch()   # B580: the staged VCM runs the bathroom in half the time
     var use_restir = False  # docs/A2_restir_migration_plan.md Phase 2/3: ReSTIR DI
                              # (area-light NEE only, primary bounce), CPU + GPU batch
@@ -202,7 +204,7 @@ def main() raises:
     while i < len(args):
         var arg = String(args[i])
         if arg == "--help" or arg == "-h":
-            print("Usage: gonzales [--interactive] [--gpu] [--fullscreen] [--no-denoise] [--verbose] [--spp N] [--seed N] [--resolution WxH] [--width W] [--height H] [--pixel X Y] [--vulkan-rt] [--checkpoint FILE] [--checkpoint-every MIN] [--resume FILE] [--stop-after N] [--list-env] scene.pbrt")
+            print("Usage: gonzales [--interactive] [--gpu] [--fullscreen] [--no-denoise] [--verbose] [--spp N] [--seed N] [--resolution WxH] [--width W] [--height H] [--pixel X Y] [--vulkan-rt] [--checkpoint FILE] [--checkpoint-every MIN] [--resume FILE] [--stop-after N] [--list-env] [--check] scene.pbrt")
             return
         elif arg == "--list-env":
             env_list()
@@ -263,6 +265,8 @@ def main() raises:
             env_set["GONZALES_RTCORE"]("1")
         elif arg == "--bake":
             bake = True
+        elif arg == "--check":
+            check_only = True
         elif arg == "--vcm":
             use_vcm = True
         elif arg == "--vcm-wavefront":
@@ -400,6 +404,14 @@ def main() raises:
     if bake:
         bake_scene(path_cstr, verbose)
         return
+    if check_only:
+        # Parse only, no GPU and no render: the scene's fallbacks as a render would warn about them; exit 3 if any.
+        _ = mojo_parse_scene_any(path_cstr, verbose)
+        var found = collected_warnings()
+        for w in found:
+            print("CHECK-WARN " + w)
+        print("CHECK " + String(len(found)) + " warning(s) in " + scene_path)
+        exit(3 if len(found) > 0 else 0)
     # Ptex demand paging needs a driver that streams between sample batches: the GPU path tracer.
     if use_gpu and not (use_sppm or use_vcm or use_restir or use_vol_restir_reuse or use_vulkan_rt):
         _ = external_call["ptex_set_paging", NoneType, Int32](Int32(1))

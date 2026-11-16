@@ -6,6 +6,7 @@ from gonzales.scene.appearance.shader import is_shader_name, shader_words, shade
 from max.algorithm import parallelize
 from std.atomic import Atomic
 from std.ffi import external_call
+from gonzales.core.diagnostics import warn
 from std.memory import unsafe_memcpy
 from std.memory.alloc import unsafe_alloc
 from std.sys.info import num_performance_cores
@@ -185,7 +186,7 @@ def _load_host_texture(
             result = _HostTexture(blob.unsafe_origin_cast[MutUntrackedOrigin](), Int(nb[unsafe_offset=0]), nf[unsafe_offset=0], nf[unsafe_offset=1],
                                   Int32(1), Int32(3), Int32(GpuTexture.FORMAT_PTEX), Int32(512))
         else:
-            print("Warning: could not read Ptex file '" + String(unsafe_from_utf8_ptr=filename.as_imm()) + "' -- it renders as a flat default instead.")
+            warn("Warning: could not read Ptex file '" + String(unsafe_from_utf8_ptr=filename.as_imm()) + "' -- it renders as a flat default instead.")
         nb.unsafe_free(); nf.unsafe_free()
         return result
     var w_out = unsafe_alloc[Int32](1); var h_out = unsafe_alloc[Int32](1)
@@ -234,8 +235,8 @@ def _load_host_texture(
         # scene_path); this is the one that exists and still will not decode.
         # It used to be counted in "N unique file(s) loaded" and then render
         # as the material's or light's flat default without a word.
-        print("Warning: could not decode texture '" + String(unsafe_from_utf8_ptr=filename.as_imm())
-              + "' -- it renders as a flat default instead.")
+        warn("Warning: could not decode texture '" + String(unsafe_from_utf8_ptr=filename.as_imm())
+             + "' -- it renders as a flat default instead.")
     return result
 
 @fieldwise_init
