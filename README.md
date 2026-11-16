@@ -4,7 +4,9 @@
 [![Book](https://github.com/gonsolo/gonzales/actions/workflows/book.yaml/badge.svg)](https://github.com/gonsolo/gonzales/actions/workflows/book.yaml)
 [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/4672/badge?v=1)](https://www.bestpractices.dev/projects/4672)
 
-> **This fork (amarbarosys/Gonzales).** Upstream is [gonsolo/gonzales](https://github.com/gonsolo/gonzales); this
+> **This fork (amarbarosys/Gonzales).** Gonzales is © 2019-2026 Andreas Wendleder and licensed under the GPL-3
+> ([LICENSE](LICENSE)). This fork claims no rights over it; the changes listed here fall under the same GPL-3
+> terms, as part of Gonzales. Upstream is [gonsolo/gonzales](https://github.com/gonsolo/gonzales); this
 > fork runs it on an AMD Radeon RX 7900 XTX (gfx1100) to render 3D assets, and keeps each change small enough to
 > offer back upstream. Every change below passes `make unittest-amd` on gfx1100 (67 files, 554 tests, same as
 > upstream `7901141a`).
