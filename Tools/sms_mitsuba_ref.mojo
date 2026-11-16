@@ -658,10 +658,6 @@ def manifold_vertex(nmap: Normalmap, h: Hit, smooth: Bool = False) -> MVertex:
 
 # ── reflect / refract and their derivatives (render/manifold.h) ─────────────
 
-@always_inline
-def sm_reflect(w: Vec3f, n: Vec3f) -> Vec3f:
-    return n * (Float32(2.0) * dot(w, n)) - w
-
 def sm_refract(w: Vec3f, n_in: Vec3f, eta_in: Float32) -> Tuple[Bool, Vec3f]:
     var n = n_in
     var eta = Float32(1.0) / eta_in

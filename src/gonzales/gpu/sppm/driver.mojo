@@ -366,8 +366,6 @@ def sppm_render_gpu(
                             if (v.ld.v0 + v.ld.v1 + v.ld.v2 + v.ld.v3) > Float32(1e-12): any_light = True
                             if (v.env.r + v.env.g + v.env.b) > Float32(1e-12): any_light = True
                         n_tot += 1
-                        for s_i in range(vp_samples):
-                            var v2 = vp_host[unsafe_offset=pi * vp_samples + s_i]
                         if not any_valid:
                             # A ray that misses everything has no visible point but may see the env.
                             if not any_light: n_novp += 1
