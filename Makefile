@@ -309,7 +309,7 @@ endif
 RELEASE_SRC = src
 MOJO_LINK_FLAGS = -Xlinker -L$(BUILD_DIR) -Xlinker -loiiobridge -Xlinker -lvulkanviewer \
                   -Xlinker -lvulkanrt -Xlinker -lvulkaninterop -Xlinker -lrtcore -Xlinker -lxert -Xlinker -loptixcurves -Xlinker -lnvdbbridge \
-                  -Xlinker -rpath -Xlinker $(BUILD_DIR) -Xlinker -lm
+                  -Xlinker -rpath -Xlinker $(abspath $(BUILD_DIR)) -Xlinker -lm
 
 $(GONZALES): $(MOJO_SRCS) pyproject.toml $(OIIO_BRIDGE_LIB) $(VIEWER_LIB) $(VULKANRT_LIB) $(VULKANINTEROP_LIB) $(RTCORE_LIB) $(XERT_LIB) $(OPTIXCURVES_LIB) $(NVDB_BRIDGE_LIB)
 	@mkdir -p $(BUILD_DIR)
@@ -349,9 +349,11 @@ dev: $(MOJO_SRCS) pyproject.toml $(OIIO_BRIDGE_LIB) $(VIEWER_LIB) $(VULKANRT_LIB
 	@grep -rlE '^\s*@(always_inline|no_inline)' $(DEV_SRC) | xargs -r sed -i -E '/^\s*@(always_inline|no_inline)(\s|$$)/d'
 	$(if $(INTEL),$(call PORT_SRC,$(DEV_SRC)))
 	$(RELEASE_ENV) uv run mojo build $(DEV_SRC)/gonzales/__init__.mojo -I $(DEV_SRC) -o $(BUILD_DIR)/gonzales_dev -D GZ_DEV=1 $(MOJO_BUILD_FLAGS) $(MOJO_LINK_FLAGS)
-# AMD RX 6800 (gfx1030): without CUDA the RT-core and interop bridges build as stubs
+# AMD (default RX 6800, gfx1030; RX 7900 XTX: make release-amd AMD_TARGET=gfx1100): without CUDA the RT-core and
+# interop bridges build as stubs
+AMD_TARGET ?= gfx1030
 release-amd:
-	$(MAKE) release BUILD_DIR=build-amd CUDA_HOME=/nonexistent MOJO_BUILD_FLAGS="--target-accelerator gfx1030"
+	$(MAKE) release BUILD_DIR=build-amd CUDA_HOME=/nonexistent MOJO_BUILD_FLAGS="--target-accelerator $(AMD_TARGET)"
 d: debug
 debug: $(GONZALES)
 t: test
