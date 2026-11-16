@@ -2078,6 +2078,32 @@ struct GpuGuidedRenderer(GuidedRenderer):
         if self.ptex_on:
             self._ptex_flush()
 
+    def render_until(mut self, spp: Int, time_s: Float32) raises -> Int:
+        """render_samples(0, spp) a batch at a time; stops once every pixel passed the noise test (--noise) or time_s
+        seconds ran out (--time). Returns the samples in the film: a converged pixel's skipped samples repeat its mean."""
+        var t0 = perf_counter_ns()
+        var si = 0
+        var active = self.n_pixels
+        while si < spp:
+            var nxt = min(si + self.handle[].batch, spp)
+            self.render_samples(si, nxt)
+            si = nxt
+            if self.handle[].adaptive_threshold > Float32(0) and si >= self.handle[].adaptive_min:
+                gpu_adaptive_update(self.handle, si)
+                var host = unsafe_alloc[UInt8](self.n_pixels)
+                self.handle[].ctx.enqueue_copy(host, self.handle[].px_active_buf)
+                self.handle[].ctx.synchronize()
+                active = 0
+                for i in range(self.n_pixels):
+                    active += Int(host[unsafe_offset=i])
+                host.unsafe_free()
+                if active == 0:
+                    break
+            if time_s > Float32(0) and Float64(perf_counter_ns() - t0) / 1.0e9 >= Float64(time_s):
+                break
+        print("Stopped at " + String(si) + " of " + String(spp) + " spp, " + String(active) + " pixels still sampling")
+        return si
+
     def _ptex_step(mut self, si: Int, batch: Int) raises:
         """After a batch: note the samples it withheld; once the load in flight is done put it on the
         device, start loading what was asked for since and render the withheld samples again."""
@@ -2334,6 +2360,8 @@ def parse_and_render(
     # CPU or GPU, only ever happens in render_interactive (below), the
     # only place a stable per-frame identity exists to key a reservoir on.
     use_vol_restir_reuse: Bool = False,
+    noise: Float32 = Float32(0),    # --noise: Cycles' adaptive threshold, GPU path tracer; 0 = off
+    time_s: Float32 = Float32(0),   # --time: render seconds, stop at the next batch; 0 = off
     ckpt: CheckpointConfig = CheckpointConfig(),
 ) raises -> Int32:
     if use_gpu and not gpu_available():
@@ -2598,6 +2626,9 @@ def parse_and_render(
             return Int32(-1)
         handle[].cam_fp = camera_footprint(psc[unsafe_offset=0].raster_to_camera,
             psc[unsafe_offset=0].camera_to_world, Int(fw), Int(fh), spp)
+        if noise > Float32(0):      # as session_set_adaptive: Cycles' factor on the threshold, its automatic minimum
+            handle[].adaptive_threshold = noise * Float32(5)
+            handle[].adaptive_min = max(4, Int(ceil(Float32(16) / pow(noise, Float32(0.3)))))
 
         # Task #163 stage 3: build the interop-AND-ray-query-capable Vulkan
         # RT scene once (if requested and the scene is within scope) and
@@ -2931,7 +2962,13 @@ def parse_and_render(
                     mojo_parsed_free(psc)
                     return ret
             else:
-                renderer.render_samples(0, spp)
+                var until = noise > Float32(0) or time_s > Float32(0)
+                if until and renderer.ptex_on:
+                    print("Warning: --noise and --time do not run with Ptex demand paging: every sample is rendered")
+                if until and not renderer.ptex_on:
+                    spp = renderer.render_until(spp, time_s)
+                else:
+                    renderer.render_samples(0, spp)
             _ = renderer.progress.finish()
             if renderer.ptex_on:
                 print("Ptex paging:", handle[].textures.ptex_cache.loaded, "face(s) loaded,", handle[].textures.ptex_cache.evicted,

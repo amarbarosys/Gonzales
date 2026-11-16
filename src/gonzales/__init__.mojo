@@ -172,6 +172,8 @@ def main() raises:
     var rt_hardware = False
     var bake = False
     var check_only = False
+    var noise = Float32(0)      # --noise T: stop each pixel once Cycles' noise test passes at threshold T
+    var time_s = Float32(0)     # --time S: stop rendering after S seconds, at the next batch
     var use_vcm_wavefront = "intel" in _accelerator_arch()   # B580: the staged VCM runs the bathroom in half the time
     var use_restir = False  # docs/A2_restir_migration_plan.md Phase 2/3: ReSTIR DI
                              # (area-light NEE only, primary bounce), CPU + GPU batch
@@ -204,7 +206,7 @@ def main() raises:
     while i < len(args):
         var arg = String(args[i])
         if arg == "--help" or arg == "-h":
-            print("Usage: gonzales [--interactive] [--gpu] [--fullscreen] [--no-denoise] [--verbose] [--spp N] [--seed N] [--resolution WxH] [--width W] [--height H] [--pixel X Y] [--vulkan-rt] [--checkpoint FILE] [--checkpoint-every MIN] [--resume FILE] [--stop-after N] [--list-env] [--check] scene.pbrt")
+            print("Usage: gonzales [--interactive] [--gpu] [--fullscreen] [--no-denoise] [--verbose] [--spp N] [--seed N] [--resolution WxH] [--width W] [--height H] [--pixel X Y] [--vulkan-rt] [--checkpoint FILE] [--checkpoint-every MIN] [--resume FILE] [--stop-after N] [--list-env] [--check] [--noise T] [--time S] scene.pbrt")
             return
         elif arg == "--list-env":
             env_list()
@@ -267,6 +269,12 @@ def main() raises:
             bake = True
         elif arg == "--check":
             check_only = True
+        elif arg == "--noise" and i + 1 < len(args):
+            i += 1
+            noise = _parse_float32(String(args[i]))
+        elif arg == "--time" and i + 1 < len(args):
+            i += 1
+            time_s = _parse_float32(String(args[i]))
         elif arg == "--vcm":
             use_vcm = True
         elif arg == "--vcm-wavefront":
@@ -366,6 +374,10 @@ def main() raises:
 
     if scene_path.byte_length() == 0:
         print("Usage: gonzales [--interactive] [--gpu] [--fullscreen] [--no-denoise] [--verbose] [--spp N] [--seed N] [--resolution WxH] [--width W] [--height H] scene.pbrt")
+        return
+
+    if (noise > Float32(0) or time_s > Float32(0)) and (not use_gpu or interactive or use_guide or use_sppm or use_vcm or use_restir or use_vol_restir_reuse or ckpt.active()):
+        print("--noise/--time: the GPU path tracer's file render only (--gpu; not --interactive, --guide, --sppm, --vcm, --restir, --checkpoint)")
         return
 
     if not scene_path.endswith(".pbrt") and not scene_path.endswith(".xml"):
@@ -486,7 +498,7 @@ def main() raises:
     elif interactive:
         render_interactive(path_cstr, sobol, use_gpu, spectral=spectral, fullscreen=fullscreen, override_w=override_w, override_h=override_h, spp_override=spp_override, seed_override=seed_override, verbose=verbose, use_restir=use_restir, use_restir_gi=use_restir_gi, use_sms_restir=use_sms_restir, use_vol_restir_reuse=use_vol_restir_reuse, headless_frames=headless_frames)
     else:
-        var rc = parse_and_render(path_cstr, sobol, use_gpu, spectral=spectral, preparsed=preparsed, gpu_ctx=gpu_ctx, override_w=override_w, override_h=override_h, no_denoise=no_denoise, spp_override=spp_override, seed_override=seed_override, verbose=verbose, use_sppm=use_sppm, sppm_passes=sppm_passes, sppm_photons=sppm_photons, sppm_radius=sppm_radius, use_jb=use_jb, jb_spacing=jb_spacing, jb_near=jb_near, use_guide=use_guide, use_vcm=use_vcm, vcm_spp=vcm_spp, vcm_photons=vcm_photons, vcm_budget=vcm_budget, vcm_cap=vcm_cap, vcm_no_keep_mis=vcm_no_keep_mis, vcm_radius_from_camera=vcm_radius_from_camera, vcm_radius_cam_percentile=vcm_radius_cam_percentile, vcm_radius_cam_fraction_mult=vcm_radius_cam_fraction_mult, vcm_no_footprint=vcm_no_footprint, vcm_radius_scale=vcm_radius_scale, use_vulkan_rt_shade=use_vulkan_rt_shade, use_vcm_wavefront=use_vcm_wavefront, use_restir=use_restir, use_restir_gi=use_restir_gi, use_sms_restir=use_sms_restir, use_vol_restir_reuse=use_vol_restir_reuse, ckpt=ckpt)
+        var rc = parse_and_render(path_cstr, sobol, use_gpu, spectral=spectral, preparsed=preparsed, gpu_ctx=gpu_ctx, override_w=override_w, override_h=override_h, no_denoise=no_denoise, spp_override=spp_override, seed_override=seed_override, verbose=verbose, use_sppm=use_sppm, sppm_passes=sppm_passes, sppm_photons=sppm_photons, sppm_radius=sppm_radius, use_jb=use_jb, jb_spacing=jb_spacing, jb_near=jb_near, use_guide=use_guide, use_vcm=use_vcm, vcm_spp=vcm_spp, vcm_photons=vcm_photons, vcm_budget=vcm_budget, vcm_cap=vcm_cap, vcm_no_keep_mis=vcm_no_keep_mis, vcm_radius_from_camera=vcm_radius_from_camera, vcm_radius_cam_percentile=vcm_radius_cam_percentile, vcm_radius_cam_fraction_mult=vcm_radius_cam_fraction_mult, vcm_no_footprint=vcm_no_footprint, vcm_radius_scale=vcm_radius_scale, use_vulkan_rt_shade=use_vulkan_rt_shade, use_vcm_wavefront=use_vcm_wavefront, use_restir=use_restir, use_restir_gi=use_restir_gi, use_sms_restir=use_sms_restir, use_vol_restir_reuse=use_vol_restir_reuse, noise=noise, time_s=time_s, ckpt=ckpt)
         var elapsed_s = Float64(perf_counter_ns() - t0) / 1_000_000_000.0
         print("Gonzales Total Execution Time:", elapsed_s, "s")
         if rc != Int32(0):
