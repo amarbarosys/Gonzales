@@ -2592,7 +2592,7 @@ def parse_and_render(
             return Int32(-1)
         var spp = Int(psc[unsafe_offset=0].samples_per_pixel)
         var ret = Int32(0)
-        var handle = gpu_upload_scene(psc, sobol_matrices, n_pixels, spectral.coeffs, spectral.res, spectral.cie_x, spectral.cie_y, spectral.cie_z, spectral.d65, gpu_ctx, restir_di=use_restir, restir_vol=use_vol_restir_reuse, instances_external=_instances_in_tlas(psc), batch=_file_batch())
+        var handle = gpu_upload_scene(psc, sobol_matrices, n_pixels, spectral.coeffs, spectral.res, spectral.cie_x, spectral.cie_y, spectral.cie_z, spectral.d65, gpu_ctx, restir_di=use_restir, restir_vol=use_vol_restir_reuse, instances_external=_instances_in_tlas(psc), batch=_file_batch(psc, not use_restir and not use_guide and not env_on["GONZALES_MNEE_INLINE"]() and not env_on["GONZALES_NO_MNEE"]()))
         if not _is_real_ptr(handle):
             mojo_parsed_free(psc)
             return Int32(-1)
@@ -3782,13 +3782,22 @@ comptime SessionPtr = Pointer[RenderSession, MutUntrackedOrigin]
 def _session_batch(n_pixels: Int) -> Int:
     return max(1, min(WAVEFRONT_BATCH, (1 << 20) // max(n_pixels, 1)))
 
-# Samples a pixel in flight for a file render: WAVEFRONT_BATCH unless GONZALES_BATCH lowers it. Each step down frees 0.6 GB
-# a megapixel and costs wall: bathroom 1024 px, 64 spp: batch 8 7.9 s / 8.8 GB, 4 9.2 s / 6.6 GB, 2 11.4 s / 5.5 GB, 1 16.1 s / 5.0 GB.
-def _file_batch() -> Int:
+# Samples a pixel in flight for a file render. GONZALES_BATCH (1 to WAVEFRONT_BATCH) sets it; each step down frees 0.55 GB a
+# megapixel and costs wall. Default 4 where the MNEE queue will take the scene's glass (a glass scene with no media, guiding or
+# ReSTIR), else WAVEFRONT_BATCH: bathroom 1024 px, 64 spp, batch 8 / 4 / 2: 7.3 / 7.7 / 8.4 s, 8.9 / 6.7 / 5.5 GB. Without the queue
+# a lower batch pays the manifold solves' tail every round (inline: 4 is 9.2 s, 2 is 11.4 s), and Cornell 1024 px has no glass: 4 is
+# 0.1 s slower there.
+def _file_batch(psc: Pointer[ParsedScene_Mojo, MutUntrackedOrigin], queue_ok: Bool) -> Int:
+    var glass = False
+    if queue_ok and psc[unsafe_offset=0].medium_count == Int32(0):
+        for mi in range(Int(psc[unsafe_offset=0].material_count)):
+            if psc[unsafe_offset=0].materials[unsafe_offset=mi].is_specular_glass():
+                glass = True
+    var default = 4 if glass else WAVEFRONT_BATCH
     try:
-        return min(WAVEFRONT_BATCH, max(1, env_int["GONZALES_BATCH"](WAVEFRONT_BATCH)))
+        return min(WAVEFRONT_BATCH, max(1, env_int["GONZALES_BATCH"](default)))
     except:
-        return WAVEFRONT_BATCH
+        return default
 
 def session_new(psc: Pointer[ParsedScene_Mojo, MutUntrackedOrigin], sobol: Pointer[UInt32, MutUntrackedOrigin],
                 spectral: SpectralHandle, gpu_ctx: Optional[DeviceContext]) -> SessionPtr:
