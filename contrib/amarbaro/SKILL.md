@@ -27,7 +27,7 @@ Paths below are relative to the Gonzales repo root. A digest of all docs can be 
 | Many lights, direct light noise | `--restir` (diffuse only) | docs/A1_feature_status.md:17 |
 | Smoky / foggy scene | PT (all media), VCM and SPPM only handle homogeneous media | docs/09_volumetric_media.md:13-21 |
 | Long render that must survive a crash | `--checkpoint run.ckpt --checkpoint-every MIN`, later `--resume run.ckpt` | docs/08_rendering_pipeline.md:77-129 |
-| Out of VRAM | `GONZALES_MESH_HOST`, `GONZALES_ENV_DOWN=1`, `GONZALES_PTEX_BUDGET_MB`, `GONZALES_GPU_LOG=1` | src/gonzales/core/env.mojo:45-52,63 |
+| Out of VRAM | `GONZALES_BATCH=2` (-3 GB at 1 MP, glass scenes +7 % wall), `GONZALES_MESH_HOST`, `GONZALES_ENV_DOWN=1`, `GONZALES_PTEX_BUDGET_MB`, `GONZALES_GPU_LOG=1` | src/gonzales/core/env.mojo:45-52,63 |
 | What does flag or env X do | `build-amd/gonzales --list-env`; flags: `src/gonzales/__init__.mojo:204-340` (`--help` shows a subset only) | "Flags" |
 | Scene feature supported? | render log: `Warning: unsupported ... Supported: ...` | "Scene support" |
 | Render a `.blend` | Blender add-on engine GONZALES (Hydra), `make hydra` | "Blender add-on" |
@@ -72,7 +72,7 @@ There is no env switch for spp, denoiser strength or filter: noise = `--spp`, th
 | Quality | `GONZALES_NO_DENOISE` | `--interactive-frames` output not denoised |
 | | `GONZALES_TEX_SPP` (16) | Ptex footprint as at N spp |
 | | `GONZALES_CULL_SIZE` (0) | drop instances smaller than that fraction of image height |
-| Memory | `GONZALES_PTEX_BUDGET_MB` (2048); `GONZALES_MESH_HOST` KB; `GONZALES_MESH_VRAM_MB`; `GONZALES_ENV_HOST` KB; `GONZALES_ENV_DOWN=1` | host placement and budgets, mostly automatic |
+| Memory | `GONZALES_BATCH` 1-8 (samples a pixel in flight: default 4 for a glass scene on the MNEE queue, else 8; each step down frees 0.55 GB a megapixel); `GONZALES_MNEE_INLINE=1` (old inline MNEE probe, no queue); `GONZALES_PTEX_BUDGET_MB` (2048); `GONZALES_MESH_HOST` KB; `GONZALES_MESH_VRAM_MB`; `GONZALES_ENV_HOST` KB; `GONZALES_ENV_DOWN=1` | host placement and budgets, mostly automatic |
 | Backend | `GONZALES_RTCORE`, `GONZALES_RTCORE_CUBIN` (abs path), `GONZALES_RT_PRUNE=1`, `GONZALES_NO_SW_SHADOW` | NVIDIA RT-core options |
 | Logs | `GONZALES_GPU_LOG`, `GONZALES_TIMING`, `GZ_VCM_TIMING=1\|2`, `GONZALES_FRAME_LOG`, `GONZALES_ROUND_LOG`, `GONZALES_BENCH=N` | stage and phase timings, free VRAM per upload |
 
@@ -199,6 +199,7 @@ Release notes: `Documentation/ReleaseNotes/0.4.md` (Moana on 12 GB, run recipe);
 - GPU PT and `--gpu --vcm` are not bit-reproducible (float atomics); fix `--seed` for comparisons
   (docs/A3_restir_theory.md:340-346). VCM reads under PT in closed boxes at low maxdepth (Scripts/smoke_matrix.py:12-16).
 - Scene cache is tied to the scene file path and size (0.4.md:48).
+- VRAM of a GPU file render is mostly per-path buffers: n_pixels x batch x ~550 B (PathState 328, shadow 104, intersection 48, ...) plus ~2.5 GiB the runtime holds for kernel scratch (the diffuse kernel needs 21 KB a thread). Bathroom 1024 px, 64 spp (2026-11-16, MNEE queue de5e14ea): batch 8 7.3 s / 8.9 GB, 4 7.7 s / 6.7 GB, 2 8.4 s / 5.5 GB. Glass-blocked NEE samples are probed once a flush from a queue (src/gonzales/transport/mnee_queue.mojo), not inline, so a lower batch no longer pays the manifold solve's tail every round.
 - Timing: wall time on a GPU is noisy (7.5-9.8 s run to run on one scene); compare per-kernel numbers (docs/PROFILING.md:18-21).
 
 ## Fork workflow
