@@ -199,7 +199,7 @@ Release notes: `Documentation/ReleaseNotes/0.4.md` (Moana on 12 GB, run recipe);
 - GPU PT and `--gpu --vcm` are not bit-reproducible (float atomics); fix `--seed` for comparisons
   (docs/A3_restir_theory.md:340-346). VCM reads under PT in closed boxes at low maxdepth (Scripts/smoke_matrix.py:12-16).
 - Scene cache is tied to the scene file path and size (0.4.md:48).
-- VRAM of a GPU file render is mostly per-path buffers: n_pixels x batch x ~550 B (PathState 328, shadow 104, intersection 48, ...) plus ~2.5 GiB the runtime holds for kernel scratch (the diffuse kernel needs 21 KB a thread). Bathroom 1024 px, 64 spp (2026-11-16, MNEE queue de5e14ea): batch 8 7.3 s / 8.9 GB, 4 7.7 s / 6.7 GB, 2 8.4 s / 5.5 GB. Glass-blocked NEE samples are probed once a flush from a queue (src/gonzales/transport/mnee_queue.mojo), not inline, so a lower batch no longer pays the manifold solve's tail every round.
+- VRAM of a GPU file render is mostly per-path buffers: n_pixels x batch x ~550 B (PathState 328, shadow 104, intersection 48, ...) plus ~2.5 GiB the runtime holds for kernel scratch (the diffuse kernel needs 21 KB a thread). Bathroom 1024 px, 64 spp (2026-11-16, MNEE queue de5e14ea): batch 8 7.3 s / 8.9 GB, 4 7.7 s / 6.7 GB, 2 8.4 s / 5.5 GB. Glass-blocked NEE samples are probed once a flush from a queue (src/gonzales/transport/mnee_queue.mojo), not inline, so a lower batch no longer pays the manifold solve's tail every round. Manifold chains are capped at MAX_SMS_VERTICES = 4 (about 1 KB of private memory a vertex in each MNEE kernel; build with `-D MAX_SMS_VERTICES=6` for three glass objects in a row).
 - Timing: wall time on a GPU is noisy (7.5-9.8 s run to run on one scene); compare per-kernel numbers (docs/PROFILING.md:18-21).
 
 ## Fork workflow
