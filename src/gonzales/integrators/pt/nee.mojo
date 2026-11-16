@@ -829,7 +829,7 @@ def sms_temporal_step(
     return dielectric_found
 
 
-def _nee_area_lights[enqueue_shadow: Bool, mnee: Bool = True, defer_only: Bool = False, park: Bool = False](
+def _nee_area_lights[enqueue_shadow: Bool, mnee: Bool = True, defer_only: Bool = False, park: Bool = False, reuse: Bool = True](
     path_ptr: Pointer[PathState, MutUntrackedOrigin],
     ctx: ShadeContext,
     normal: Vec3f,
@@ -894,7 +894,7 @@ def _nee_area_lights[enqueue_shadow: Bool, mnee: Bool = True, defer_only: Bool =
             var pdf_bsdf_nee = bxdf_pdf_diffuse(cos_s)
             var w_nee = Float32(1.0) if _emitter_invisible(ctx, al) else power_heuristic(pdf_light, pdf_bsdf_nee)
             var spec_w = _to_spec_diffuse_lit(ctx, alb, al.emission, path_ptr[].wavelengths) * (cos_s * w_nee * lobe_w / pdf_light)
-            comptime if not defer_only:
+            comptime if not defer_only and reuse:   # reuse = False: no ReSTIR SMS in this kernel
                 if pixel_idx >= 0 and _is_real_ptr(sms_io.read):
                     var contrib = path_ptr[].throughput * spec_w
                     # ReSTIR SMS (Phase 6): temporal-reused glass-caustic probing

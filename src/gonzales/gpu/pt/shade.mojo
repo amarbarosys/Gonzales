@@ -110,7 +110,7 @@ def resolve_suppress_gpu(
 
 @__llvm_metadata(MAX_THREADS_PER_BLOCK_METADATA=StaticTuple[Int32, 1](Int32(256)))
 @__llvm_metadata(`nvvm.minctasm`=SIMDLength(MINCTA_DIFFUSE))
-def shade_diffuse_gpu[mnee: Bool, defer_only: Bool = False, park: Bool = False](
+def shade_diffuse_gpu[mnee: Bool, defer_only: Bool = False, park: Bool = False, restir: Bool = True](
     paths: Pointer[PathState, MutUntrackedOrigin],
     intersections: Pointer[Intersection, MutUntrackedOrigin],
     sd: SceneView,
@@ -154,7 +154,7 @@ def shade_diffuse_gpu[mnee: Bool, defer_only: Bool = False, park: Bool = False](
         _shade_sss_exit[True](path_ptr, inter, ctx_ptr[])
         return
     var mat = sd.materials[unsafe_offset=Int(inter.primId.materialIndex)]
-    var restir_on = use_restir != Int32(0)
+    var restir_on = restir and use_restir != Int32(0)
     # tid IS the pixel index here: this kernel only ever sees use_restir=True
     # from gpu_render_sample, which runs exactly one path per pixel (see the
     # param block above -- gpu_render_wavefront never sets it). restir_on
@@ -168,7 +168,7 @@ def shade_diffuse_gpu[mnee: Bool, defer_only: Bool = False, park: Bool = False](
             gbuf_normal=gbuf_normal, gbuf_depth=gbuf_depth,
             gbuf_material_id=gbuf_material_id, gbuf_world_pos=gbuf_world_pos,
             frame_w=frame_w, frame_h=frame_h)
-    shade_diffuse[True, True, mnee, defer_only, park](path_ptr, inter, ctx_ptr[], mat, ctx_ptr[].guide_write, restir_io, tid if restir_has_state else -1)
+    shade_diffuse[True, True, mnee, defer_only, park, restir](path_ptr, inter, ctx_ptr[], mat, ctx_ptr[].guide_write, restir_io, tid if restir_has_state else -1)
 
 
 # The MNEE queue (mnee_queue.mojo): shade_diffuse_gpu[..., park=True] parks the glass-blocked NEE samples; the host flushes

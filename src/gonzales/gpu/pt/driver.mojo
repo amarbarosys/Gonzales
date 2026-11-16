@@ -493,7 +493,7 @@ def _gpu_bounce_kernels(
             grid_dim=grid_dim, block_dim=block_size,
         )
         if park_ok:
-            handle[].ctx.enqueue_function[shade_diffuse_gpu[True, False, True]](
+            handle[].ctx.enqueue_function[shade_diffuse_gpu[True, False, True, False]](
                 handle[].path_buf.unsafe_ptr().unsafe_bitcast[PathState]().unsafe_mut_cast[True]().unsafe_origin_cast[MutUntrackedOrigin](),
                 handle[].inter_buf.unsafe_ptr().unsafe_bitcast[Intersection]().unsafe_mut_cast[True]().unsafe_origin_cast[MutUntrackedOrigin](),
                 sd,
@@ -560,14 +560,36 @@ def _gpu_bounce_kernels(
                 grid_dim=grid_dim,
                 block_dim=block_size,
             )
-        else:
+        elif use_restir:
                 handle[].ctx.enqueue_function[shade_diffuse_gpu[False]](
                 handle[].path_buf.unsafe_ptr().unsafe_bitcast[PathState]().unsafe_mut_cast[True]().unsafe_origin_cast[MutUntrackedOrigin](),
                 handle[].inter_buf.unsafe_ptr().unsafe_bitcast[Intersection]().unsafe_mut_cast[True]().unsafe_origin_cast[MutUntrackedOrigin](),
                 sd,
                 handle[].sobol_buf.unsafe_ptr().unsafe_bitcast[UInt32](),
                 Int64(n), kind_idx, live_count.unsafe_offset(1 + Int(MatKind.diffuse)),
-                Int32(1) if use_restir else Int32(0),
+                Int32(1),
+                restir_read,
+                restir_write,
+                handle[].atrous_normals_buf.unsafe_ptr().unsafe_bitcast[Float32](),
+                handle[].atrous_depth_buf.unsafe_ptr().unsafe_bitcast[Float32](),
+                handle[].gbuf_material_id_buf.unsafe_ptr().unsafe_bitcast[Int32](),
+                handle[].gbuf_worldpos_buf.unsafe_ptr().unsafe_bitcast[Float32](),
+                handle[].film.width,
+                handle[].film.height,
+                shadow_ptr,
+                handle[].shade_ctx_buf.unsafe_ptr().unsafe_bitcast[ShadeContext]().unsafe_mut_cast[True]().unsafe_origin_cast[MutUntrackedOrigin](),
+                grid_dim=grid_dim,
+                block_dim=block_size,
+            )
+        else:
+            # no reservoir reuse: the kernel without the ReSTIR DI, GI and SMS code (its stack slots are a thread's scratch)
+            handle[].ctx.enqueue_function[shade_diffuse_gpu[False, False, False, False]](
+                handle[].path_buf.unsafe_ptr().unsafe_bitcast[PathState]().unsafe_mut_cast[True]().unsafe_origin_cast[MutUntrackedOrigin](),
+                handle[].inter_buf.unsafe_ptr().unsafe_bitcast[Intersection]().unsafe_mut_cast[True]().unsafe_origin_cast[MutUntrackedOrigin](),
+                sd,
+                handle[].sobol_buf.unsafe_ptr().unsafe_bitcast[UInt32](),
+                Int64(n), kind_idx, live_count.unsafe_offset(1 + Int(MatKind.diffuse)),
+                Int32(0),
                 restir_read,
                 restir_write,
                 handle[].atrous_normals_buf.unsafe_ptr().unsafe_bitcast[Float32](),
