@@ -4,6 +4,22 @@
 [![Book](https://github.com/gonsolo/gonzales/actions/workflows/book.yaml/badge.svg)](https://github.com/gonsolo/gonzales/actions/workflows/book.yaml)
 [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/4672/badge?v=1)](https://www.bestpractices.dev/projects/4672)
 
+> **This fork (amarbarosys/Gonzales).** Upstream is [gonsolo/gonzales](https://github.com/gonsolo/gonzales); this
+> fork runs it on an AMD Radeon RX 7900 XTX (gfx1100) to render 3D assets, and keeps each change small enough to
+> offer back upstream. Every change below passes `make unittest-amd` on gfx1100 (67 files, 554 tests, same as
+> upstream `7901141a`).
+>
+> | Change | Why |
+> |---|---|
+> | Removed `_to_spec_weight`, `Scene.with_camera_footprint`, `scene_parse_state_new` | Unused: every name in `src/` was counted over all tracked code, and these three had no use beyond their definition (the first lost its last callers in `cd6fdf82` and `339cd80a`). |
+> | PLY big-endian and double readers: one load plus `byte_swap` instead of a heap allocation per value; removed the unused `_ply_u8_at` | About 19x faster on 64 MB of random bytes (354-400 ms to 19-20 ms) and bit-exact on all 67M offsets. Little-endian float PLY, the common case, was already a direct load. |
+>
+> Found while doing it, not yet changed: `uv` picks Python 3.15 but `max` 26.7 ships 3.14 wheels only (use
+> `uv venv --python 3.14`); `release-amd` hard-codes gfx1030, while `make release MOJO_BUILD_FLAGS="--target-accelerator gfx1100" CUDA_HOME=/nonexistent BUILD_DIR=build-amd`
+> builds and renders on gfx1100 (Cornell box 512 px, 64 spp: GPU 0.75 s, CPU 6.6 s); the binary must run from the
+> repo root (relative rpath and data paths); `Scenes/cornell-box.pbrt` sets a wide `PixelFilter` (gaussian, radius
+> 5, sigma 2.5), so its edges are 6 px soft by design.
+
 # Gonzales — Physically Based Renderer
 
 A production-capable spectral Monte Carlo renderer written in **Mojo**, designed
