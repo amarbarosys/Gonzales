@@ -503,7 +503,7 @@ def adaptive_converge_gpu(
         var i = film[unsafe_offset=px*3+c] * inv
         diff += abs(i - aux_film[unsafe_offset=px*3+c] * inv)
         intensity += i
-    var norm = sqrt(intensity) if intensity < Float32(1) else intensity
+    var norm = sqrt(intensity)
     if diff / (Float32(0.0001) + norm) < threshold:
         px_active[unsafe_offset=px] = UInt8(0)
 
