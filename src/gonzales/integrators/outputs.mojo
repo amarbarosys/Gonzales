@@ -21,6 +21,7 @@ from gonzales.scene.description.pbrt_parser import ParsedScene_Mojo
 from gonzales.integrators.postprocess import denoise, write_image_cropwindow
 from gonzales.integrators.film import apply_film_sensor
 from gonzales.core.geometry import RGB, _is_real_ptr
+from gonzales.core.diagnostics import stat_text
 
 
 def _cstr(s: String) -> Pointer[UInt8, MutUntrackedOrigin]:
@@ -113,6 +114,13 @@ def write_render_outputs[Ob: Origin[mut=True], On: Origin[mut=True], Oa: Origin[
     var n_normal = _sidecar_name(film, ".normal.exr")
     var n_depth = _sidecar_name(film, ".depth.exr")
     var n_noisy = _sidecar_name(film, ".noisy.exr")
+    # the --json summary lists what was written
+    stat_text("outputs", String(unsafe_from_utf8_ptr=film.as_imm()), True)
+    stat_text("outputs", String(unsafe_from_utf8_ptr=n_albedo.as_imm()), True)
+    stat_text("outputs", String(unsafe_from_utf8_ptr=n_normal.as_imm()), True)
+    stat_text("outputs", String(unsafe_from_utf8_ptr=n_depth.as_imm()), True)
+    if denoised:
+        stat_text("outputs", String(unsafe_from_utf8_ptr=n_noisy.as_imm()), True)
     var ret_slot = unsafe_alloc[Int32](1)
     ret_slot[unsafe_offset=0] = Int32(0)
 

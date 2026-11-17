@@ -13,6 +13,7 @@ from gonzales.integrators.film import normalize_film, apply_film_sensor
 from gonzales.core.progress import Progress, fmt_time
 from gonzales.integrators.outputs import write_partial_image, write_render_outputs
 from std.time import perf_counter_ns
+from gonzales.core.diagnostics import stat_num, vram_mib
 from gonzales.core.geometry import RGB, Point3f, Vec3f, Bounds3f, _is_real_ptr
 from gonzales.transport.render_state import TileResult, FilmDims
 from gonzales.scene.shapes.primitives import PrimId, TriangleMesh, Instance, mesh_vi, mesh_pos
@@ -2101,6 +2102,7 @@ struct GpuGuidedRenderer(GuidedRenderer):
                     break
             if time_s > Float32(0) and Float64(perf_counter_ns() - t0) / 1.0e9 >= Float64(time_s):
                 break
+        stat_num("pixels_active_at_stop", Float64(active))
         print("Stopped at " + String(si) + " of " + String(spp) + " spp, " + String(active) + " pixels still sampling")
         return si
 
@@ -2939,6 +2941,8 @@ def parse_and_render(
                 handle, psc, seed_dim0, seed_dim1, n_pixels, spp, guided, use_vk, interop_scene,
                 interop_rays_buf_opt^, interop_results_buf_opt^, mesh_material_idx_buf_opt^, mesh_al_idx_buf_opt^,
                 n_meshes_vk, instance_base_mesh_buf_opt^)
+            var t_render = perf_counter_ns()
+            var spp_cap = spp
             renderer.start_ptex()
             if guided:
                 var root = psc[unsafe_offset=0].bvh_nodes[unsafe_offset=0]
@@ -2970,6 +2974,9 @@ def parse_and_render(
                 else:
                     renderer.render_samples(0, spp)
             _ = renderer.progress.finish()
+            stat_num("render_s", Float64(perf_counter_ns() - t_render) / 1.0e9)
+            stat_num("spp_target", Float64(spp_cap)); stat_num("spp_reached", Float64(spp))
+            stat_num("pixels", Float64(n_pixels)); stat_num("vram_mib", vram_mib())   # before the scene is freed
             if renderer.ptex_on:
                 print("Ptex paging:", handle[].textures.ptex_cache.loaded, "face(s) loaded,", handle[].textures.ptex_cache.evicted,
                       "evicted,", handle[].textures.ptex_cache.denied, "found no room; pool",

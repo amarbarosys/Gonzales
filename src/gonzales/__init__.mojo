@@ -4,7 +4,7 @@ from std.sys.info import _accelerator_arch
 from std.time import perf_counter_ns
 from std.os import setenv
 from gonzales.core.env import env_str, env_on, env_set, env_warn_unknown, env_list
-from gonzales.core.diagnostics import collected_warnings
+from gonzales.core.diagnostics import collected_warnings, stat_num, stat_text, json_write
 from std.memory.alloc import unsafe_alloc
 from gonzales.app.pipeline import _generate_sobol_matrices, data_dir_default, parse_and_render, render_interactive, debug_trace_pixel, debug_render_vulkanrt, bake_scene
 from gonzales.core.spectrum import load_spectral_context, spectral_handle, SpectralContext
@@ -174,6 +174,7 @@ def main() raises:
     var check_only = False
     var noise = Float32(0)      # --noise T: stop each pixel once Cycles' noise test passes at threshold T
     var time_s = Float32(0)     # --time S: stop rendering after S seconds, at the next batch
+    var json_path = String("")  # --json PATH: the run summary and warnings as JSON
     var use_vcm_wavefront = "intel" in _accelerator_arch()   # B580: the staged VCM runs the bathroom in half the time
     var use_restir = False  # docs/A2_restir_migration_plan.md Phase 2/3: ReSTIR DI
                              # (area-light NEE only, primary bounce), CPU + GPU batch
@@ -269,6 +270,9 @@ def main() raises:
             bake = True
         elif arg == "--check":
             check_only = True
+        elif arg == "--json" and i + 1 < len(args):
+            i += 1
+            json_path = String(args[i])
         elif arg == "--noise" and i + 1 < len(args):
             i += 1
             noise = _parse_float32(String(args[i]))
@@ -392,6 +396,9 @@ def main() raises:
             ckpt.path = ckpt.resume     # a resumed render keeps its checkpoint going
         ckpt.scene = scene_path
         ckpt.seed_given = seed_override >= 0
+    stat_text("scene", scene_path)
+    for j in range(1, len(args)):
+        stat_text("args", String(args[j]), True)
     var data_dir = env_str["GONZALES_DATA_DIR"](data_dir_default())
 
     var path_len = scene_path.byte_length()
@@ -423,6 +430,10 @@ def main() raises:
         for w in found:
             print("CHECK-WARN " + w)
         print("CHECK " + String(len(found)) + " warning(s) in " + scene_path)
+        stat_text("scene", scene_path)
+        stat_num("check_warnings", Float64(len(found)))
+        if json_path.byte_length() > 0:
+            _ = json_write(json_path)
         exit(3 if len(found) > 0 else 0)
     # Ptex demand paging needs a driver that streams between sample batches: the GPU path tracer.
     if use_gpu and not (use_sppm or use_vcm or use_restir or use_vol_restir_reuse or use_vulkan_rt):
@@ -469,7 +480,9 @@ def main() raises:
 
     var preparsed = Pointer[ParsedScene_Mojo, MutUntrackedOrigin].unsafe_dangling()
     if will_parse:
+        var t_parse = perf_counter_ns()
         preparsed = mojo_parse_scene_any(path_cstr, verbose, plys)
+        stat_num("parse_s", Float64(perf_counter_ns() - t_parse) / 1.0e9)
 
     for ti in range(len(ply_threads)):
         ply_threads[ti].join()
@@ -501,6 +514,10 @@ def main() raises:
         var rc = parse_and_render(path_cstr, sobol, use_gpu, spectral=spectral, preparsed=preparsed, gpu_ctx=gpu_ctx, override_w=override_w, override_h=override_h, no_denoise=no_denoise, spp_override=spp_override, seed_override=seed_override, verbose=verbose, use_sppm=use_sppm, sppm_passes=sppm_passes, sppm_photons=sppm_photons, sppm_radius=sppm_radius, use_jb=use_jb, jb_spacing=jb_spacing, jb_near=jb_near, use_guide=use_guide, use_vcm=use_vcm, vcm_spp=vcm_spp, vcm_photons=vcm_photons, vcm_budget=vcm_budget, vcm_cap=vcm_cap, vcm_no_keep_mis=vcm_no_keep_mis, vcm_radius_from_camera=vcm_radius_from_camera, vcm_radius_cam_percentile=vcm_radius_cam_percentile, vcm_radius_cam_fraction_mult=vcm_radius_cam_fraction_mult, vcm_no_footprint=vcm_no_footprint, vcm_radius_scale=vcm_radius_scale, use_vulkan_rt_shade=use_vulkan_rt_shade, use_vcm_wavefront=use_vcm_wavefront, use_restir=use_restir, use_restir_gi=use_restir_gi, use_sms_restir=use_sms_restir, use_vol_restir_reuse=use_vol_restir_reuse, noise=noise, time_s=time_s, ckpt=ckpt)
         var elapsed_s = Float64(perf_counter_ns() - t0) / 1_000_000_000.0
         print("Gonzales Total Execution Time:", elapsed_s, "s")
+        stat_num("total_s", elapsed_s)
+        stat_num("exit_code", Float64(rc))
+        if json_path.byte_length() > 0:
+            _ = json_write(json_path)
         if rc != Int32(0):
             path_cstr.unsafe_free()
             sobol.unsafe_free()

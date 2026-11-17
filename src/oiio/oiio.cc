@@ -5,7 +5,9 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
+#include <dirent.h>
 #include <cstring>
 #include <iostream>
 #include <memory>
@@ -764,6 +766,67 @@ extern "C" int diag_get(int i, char* buf, int cap) {
         std::memcpy(buf, diag_list[size_t(i)].data(), size_t(n));
         buf[n] = 0;
         return n;
+}
+
+// Run summary for --json: values kept as JSON text in the order they were set (stat_num, stat_text), written with the
+// warnings by json_write.
+static std::vector<std::pair<std::string, std::string>> stats;
+static std::string json_quote(const char* s, int n) {
+        std::string o = "\"";
+        for (int i = 0; i < n; ++i) {
+                unsigned char c = (unsigned char)s[i];
+                if (c == '"' || c == '\\') { o += '\\'; o += char(c); }
+                else if (c < 0x20) { char b[8]; snprintf(b, sizeof b, "\\u%04x", c); o += b; }
+                else o += char(c);
+        }
+        return o + "\"";
+}
+static std::string& stat_ref(const std::string& k) {
+        for (auto& e : stats) if (e.first == k) return e.second;
+        stats.emplace_back(k, std::string());
+        return stats.back().second;
+}
+extern "C" void stat_num(const char* k, int kn, double v) {
+        std::lock_guard<std::mutex> g(diag_mu);
+        char b[48]; snprintf(b, sizeof b, "%.6g", v);
+        stat_ref(std::string(k, kn)) = b;
+}
+// A string value; with push != 0 it is appended to the array under that key.
+extern "C" void stat_text(const char* k, int kn, const char* v, int vn, int push) {
+        std::lock_guard<std::mutex> g(diag_mu);
+        std::string& r = stat_ref(std::string(k, kn));
+        std::string q = json_quote(v, vn);
+        if (!push) r = q;
+        else r = r.empty() ? "[" + q + "]" : r.substr(0, r.size() - 1) + ", " + q + "]";
+}
+extern "C" int json_write(const char* path, int pn) {
+        std::lock_guard<std::mutex> g(diag_mu);
+        std::string o = "{\n";
+        for (auto& e : stats) o += "  " + json_quote(e.first.data(), int(e.first.size())) + ": " + e.second + ",\n";
+        o += "  \"warnings\": [";
+        for (size_t i = 0; i < diag_list.size(); ++i) o += (i ? ", " : "") + json_quote(diag_list[i].data(), int(diag_list[i].size()));
+        o += "]\n}\n";
+        FILE* f = fopen(std::string(path, pn).c_str(), "w");
+        if (!f) return 1;
+        fwrite(o.data(), 1, o.size(), f);
+        fclose(f);
+        return 0;
+}
+// This process's VRAM in MiB from the DRM fdinfo of its device files; -1 if there is none.
+extern "C" double vram_mib() {
+        double kib = 0; bool any = false;
+        if (DIR* d = opendir("/proc/self/fdinfo")) {
+                while (dirent* e = readdir(d)) {
+                        if (e->d_name[0] == '.') continue;
+                        FILE* f = fopen((std::string("/proc/self/fdinfo/") + e->d_name).c_str(), "r");
+                        if (!f) continue;
+                        char line[256]; double v;
+                        while (fgets(line, sizeof line, f)) if (sscanf(line, "drm-memory-vram: %lf", &v) == 1) { kib += v; any = true; }
+                        fclose(f);
+                }
+                closedir(d);
+        }
+        return any ? kib / 1024.0 : -1.0;
 }
 
 // Every level carries a one-texel border copied from the neighbouring faces, so a bilinear

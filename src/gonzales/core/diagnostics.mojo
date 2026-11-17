@@ -33,6 +33,35 @@ def warn(msg: String):
         m.unsafe_ptr().unsafe_mut_cast[True]().unsafe_origin_cast[MutUntrackedOrigin](), Int32(m.byte_length()))
 
 
+def stat_num(key: String, v: Float64):
+    """A number in the --json run summary (oiio.cc stat_num)."""
+    var k = key
+    external_call["stat_num", NoneType, Pointer[UInt8, MutUntrackedOrigin], Int32, Float64](
+        k.unsafe_ptr().unsafe_mut_cast[True]().unsafe_origin_cast[MutUntrackedOrigin](), Int32(k.byte_length()), v)
+
+
+def stat_text(key: String, value: String, push: Bool = False):
+    """A string in the --json run summary, or appended to the array under `key` when `push`."""
+    var k = key
+    var v = value
+    external_call["stat_text", NoneType, Pointer[UInt8, MutUntrackedOrigin], Int32, Pointer[UInt8, MutUntrackedOrigin], Int32, Int32](
+        k.unsafe_ptr().unsafe_mut_cast[True]().unsafe_origin_cast[MutUntrackedOrigin](), Int32(k.byte_length()),
+        v.unsafe_ptr().unsafe_mut_cast[True]().unsafe_origin_cast[MutUntrackedOrigin](), Int32(v.byte_length()),
+        Int32(1) if push else Int32(0))
+
+
+def json_write(path: String) -> Int:
+    """The run summary and the warnings as JSON; 0 on success."""
+    var p = path
+    return Int(external_call["json_write", Int32, Pointer[UInt8, MutUntrackedOrigin], Int32](
+        p.unsafe_ptr().unsafe_mut_cast[True]().unsafe_origin_cast[MutUntrackedOrigin](), Int32(p.byte_length())))
+
+
+def vram_mib() -> Float64:
+    """This process's VRAM in MiB (DRM fdinfo); -1 if the kernel shows none."""
+    return external_call["vram_mib", Float64]()
+
+
 def collected_warnings() -> List[String]:
     var out = List[String]()
     var buf = unsafe_alloc[UInt8](4096)
