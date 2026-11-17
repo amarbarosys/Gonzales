@@ -2364,6 +2364,7 @@ def parse_and_render(
     use_vol_restir_reuse: Bool = False,
     noise: Float32 = Float32(0),    # --noise: Cycles' adaptive threshold, GPU path tracer; 0 = off
     time_s: Float32 = Float32(0),   # --time: render seconds, stop at the next batch; 0 = off
+    clamp: Float32 = Float32(0),    # --clamp: pbrt's per-sample maxcomponentvalue, over the scene's; 0 = the scene's
     ckpt: CheckpointConfig = CheckpointConfig(),
 ) raises -> Int32:
     if use_gpu and not gpu_available():
@@ -2387,6 +2388,8 @@ def parse_and_render(
             eff_h = Int32(Int(eff_w) * Int(psc[unsafe_offset=0].film_h) / max(Int(psc[unsafe_offset=0].film_w), 1))
         resize_film(psc, eff_w, eff_h)
     mojo_apply_overrides(psc, spp_override, Int32(0), Int32(0), seed_override)
+    if clamp > Float32(0):
+        psc[unsafe_offset=0].film_max_comp = clamp
     try:
         checkpoint_adopt_seed(ckpt, psc)
     except e:

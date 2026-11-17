@@ -174,6 +174,7 @@ def main() raises:
     var check_only = False
     var noise = Float32(0)      # --noise T: stop each pixel once Cycles' noise test passes at threshold T
     var time_s = Float32(0)     # --time S: stop rendering after S seconds, at the next batch
+    var clamp = Float32(0)      # --clamp X: pbrt's per-sample maxcomponentvalue (biased: it cuts caustic fireflies and energy)
     var json_path = String("")  # --json PATH: the run summary and warnings as JSON
     var use_vcm_wavefront = "intel" in _accelerator_arch()   # B580: the staged VCM runs the bathroom in half the time
     var use_restir = False  # docs/A2_restir_migration_plan.md Phase 2/3: ReSTIR DI
@@ -270,6 +271,9 @@ def main() raises:
             bake = True
         elif arg == "--check":
             check_only = True
+        elif arg == "--clamp" and i + 1 < len(args):
+            i += 1
+            clamp = _parse_float32(String(args[i]))
         elif arg == "--json" and i + 1 < len(args):
             i += 1
             json_path = String(args[i])
@@ -511,7 +515,7 @@ def main() raises:
     elif interactive:
         render_interactive(path_cstr, sobol, use_gpu, spectral=spectral, fullscreen=fullscreen, override_w=override_w, override_h=override_h, spp_override=spp_override, seed_override=seed_override, verbose=verbose, use_restir=use_restir, use_restir_gi=use_restir_gi, use_sms_restir=use_sms_restir, use_vol_restir_reuse=use_vol_restir_reuse, headless_frames=headless_frames)
     else:
-        var rc = parse_and_render(path_cstr, sobol, use_gpu, spectral=spectral, preparsed=preparsed, gpu_ctx=gpu_ctx, override_w=override_w, override_h=override_h, no_denoise=no_denoise, spp_override=spp_override, seed_override=seed_override, verbose=verbose, use_sppm=use_sppm, sppm_passes=sppm_passes, sppm_photons=sppm_photons, sppm_radius=sppm_radius, use_jb=use_jb, jb_spacing=jb_spacing, jb_near=jb_near, use_guide=use_guide, use_vcm=use_vcm, vcm_spp=vcm_spp, vcm_photons=vcm_photons, vcm_budget=vcm_budget, vcm_cap=vcm_cap, vcm_no_keep_mis=vcm_no_keep_mis, vcm_radius_from_camera=vcm_radius_from_camera, vcm_radius_cam_percentile=vcm_radius_cam_percentile, vcm_radius_cam_fraction_mult=vcm_radius_cam_fraction_mult, vcm_no_footprint=vcm_no_footprint, vcm_radius_scale=vcm_radius_scale, use_vulkan_rt_shade=use_vulkan_rt_shade, use_vcm_wavefront=use_vcm_wavefront, use_restir=use_restir, use_restir_gi=use_restir_gi, use_sms_restir=use_sms_restir, use_vol_restir_reuse=use_vol_restir_reuse, noise=noise, time_s=time_s, ckpt=ckpt)
+        var rc = parse_and_render(path_cstr, sobol, use_gpu, spectral=spectral, preparsed=preparsed, gpu_ctx=gpu_ctx, override_w=override_w, override_h=override_h, no_denoise=no_denoise, spp_override=spp_override, seed_override=seed_override, verbose=verbose, use_sppm=use_sppm, sppm_passes=sppm_passes, sppm_photons=sppm_photons, sppm_radius=sppm_radius, use_jb=use_jb, jb_spacing=jb_spacing, jb_near=jb_near, use_guide=use_guide, use_vcm=use_vcm, vcm_spp=vcm_spp, vcm_photons=vcm_photons, vcm_budget=vcm_budget, vcm_cap=vcm_cap, vcm_no_keep_mis=vcm_no_keep_mis, vcm_radius_from_camera=vcm_radius_from_camera, vcm_radius_cam_percentile=vcm_radius_cam_percentile, vcm_radius_cam_fraction_mult=vcm_radius_cam_fraction_mult, vcm_no_footprint=vcm_no_footprint, vcm_radius_scale=vcm_radius_scale, use_vulkan_rt_shade=use_vulkan_rt_shade, use_vcm_wavefront=use_vcm_wavefront, use_restir=use_restir, use_restir_gi=use_restir_gi, use_sms_restir=use_sms_restir, use_vol_restir_reuse=use_vol_restir_reuse, noise=noise, time_s=time_s, clamp=clamp, ckpt=ckpt)
         var elapsed_s = Float64(perf_counter_ns() - t0) / 1_000_000_000.0
         print("Gonzales Total Execution Time:", elapsed_s, "s")
         stat_num("total_s", elapsed_s)
